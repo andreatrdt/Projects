@@ -1,0 +1,104 @@
+
+        >--- POINT 0 ---<
+    
+
+ >--- Point 0: t-student VaR ---<
+ The daily VaR at 99% confidence level is: 563223.32
+ The daily ES at 99% confidence level is: 787977.23
+ The plausibility check gives: 390230.71
+
+
+        >--- POINT 1 ---<
+    
+
+ >--- Historical Simulation ---<
+ alpha = 0.95 V_t = 4731416.99 EUR
+    -> Daily VaR:   96039.47 EUR
+    -> Daily ES:   143630.83 EUR
+
+
+ >--- Bootstrap ---<
+ alpha = 0.95 V_t = 4731416.99 EUR
+    -> Daily VaR:  100759.30 EUR
+    -> Daily ES:   174036.41 EUR
+
+
+ >--- Plausibility Check ---<
+    -> Thumb Rule:     92035.63 EUR
+    -> Against the HS: 96039.47 EUR
+    -> Against the BS: 100759.30 EUR
+
+
+ >--- Weighted Historical Simulation ---<
+ alpha = 0.95 lambda = 0.95
+    -> Daily VaR:  1.593678%
+    -> Daily ES:   2.154424%
+
+
+ >--- Plausibility Check ---<
+    -> Thumb Rule: 1.921928%
+    -> Against the WHS: 1.593678%
+
+
+ >--- Principal Component Analysis (n=1, 52.66%) ---<
+    -> Daily VaR:  5.453693%
+    -> Daily ES:   6.881475%
+    
+
+ >--- Principal Component Analysis (n=2, 59.75%) ---<
+    -> Daily VaR:  5.431908%
+    -> Daily ES:   6.861275%
+    
+
+ >--- Principal Component Analysis (n=3, 64.28%) ---<
+    -> Daily VaR:  5.434004%
+    -> Daily ES:   6.863389%
+    
+
+ >--- Principal Component Analysis (n=4, 68.72%) ---<
+    -> Daily VaR:  5.441210%
+    -> Daily ES:   6.870956%
+    
+
+ >--- Principal Component Analysis (n=5, 72.77%) ---<
+    -> Daily VaR:  5.439734%
+    -> Daily ES:   6.869500%
+    
+
+ >--- Plausibility Check ---<
+    -> Thumb Rule: 5.463153%
+    -> Against the PCA: 5.439734%
+
+
+        >--- POINT 2 ---<
+    
+
+ >--- Full Monte Carlo VaR ---<
+    -> 10-days VaR: 4400.22
+
+ 
+ >--- Delta Normal VaR ---<
+    -> 10-days VaR: 4155.885758
+
+
+ >--- Delta Gamma VaR ---<
+    -> 10-days VaR: 1051.157690
+
+
+        >--- POINT 3 ---<
+    
+
+ >--- Clicquet Option (MC) ---<
+    The price of the Clicquet option is: 0.64787061 EUR
+    Notional: 19436118.25562239EUR
+    The 95.00% confidence interval is: 19409295.63541795 - 19462940.87582682 EUR
+
+
+ >--- Closed Formula Clicquet Option ---<
+    The price of the Clicquet option is: 0.64793566 EUR
+    Notional: 19438069.74712067 EUR
+
+
+    >--- Closed Formula Clicquet Option price for 30mln notional ---<
+      The total price of the Clicquet option is: 19438069.75 EUR)
+
