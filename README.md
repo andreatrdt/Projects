@@ -1,4 +1,4 @@
-# Financial Engineering Projects - Group 16
+# Financial Engineering Projects
 This repository contains a series of assignments for the Financial Engineering course (2023-2024) developed by Group 16. The projects cover a wide range of topics related to financial derivatives, pricing models, and numerical methods. Below is a summary of the key topics covered in each assignment.
 
 ### Assignment 1: Option Pricing and Error Analysis
