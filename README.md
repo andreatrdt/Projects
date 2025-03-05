@@ -75,3 +75,21 @@ This repository contains a series of assignments for the Financial Engineering c
 - Present Value Calculation: Evaluated present value using Monte Carlo simulations, considering survival probabilities and default scenarios for Investment Grade (IG) and High Yield (HY) bonds.
 - Credit VaR Simulation: Simulated Credit VaR under different correlation scenarios, examining the impact of default and migration risks.
 - Concentration Risk Analysis: Assessed the impact of concentration risk by varying the number of obligors, demonstrating the importance of diversification.
+
+
+### Multivariate Pricing for Financial Derivatives
+This repository contains the Final Project for the Financial Engineering course AY 2023-2024. In this project, we develop and calibrate multivariate models based on Lévy processes for pricing structured derivatives on equity indices, specifically targeting the S&P 500 and EURO STOXX 50 markets.
+
+The project focuses on:
+
+Modeling Forward Prices: We assume that the forward price for asset i at time t is given by F_i(t, T) = F_i(0, T) * exp(X_i(t) + p_i * t) where X_i(t) = Y_i(t) + a_i * Z(t) is a multivariate Lévy process with Normal Inverse Gaussian (NIG) marginals.
+
+Martingality and Drift Compensation: We derive the drift compensators p_i so that the forward price processes are martingales.
+
+Calibration of the Multivariate Lévy Model: The project calibrates the marginal parameters (kappa, theta, sigma) jointly for both markets under the constraint (sigma_1^2) / (theta_1^2 * kappa_1) = (sigma_2^2) / (theta_2^2 * kappa_2) = c and further calibrates the dependence parameters to match the market-implied correlation with historical data.
+
+Synthetic Forwards and Discount Factors: We compute discount factors and forward prices using synthetic forward techniques (via Put/Call parity) as an alternative to classical bootstrap methods.
+
+Comparison with the Black Model: In order to assess model performance, we also calibrate a plain Black model and compare its forward exponents, volatility surfaces, and pricing accuracy to those of the Lévy model.
+
+Exotic Derivative Pricing: Finally, we price a derivative with a payoff defined as: (S_1(t) - S_1(0))^+ * 1_{S_2(t) < 0.95 * S_2(0)} and discuss the advantages and drawbacks of each modeling approach.
