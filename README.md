@@ -149,6 +149,6 @@ This final project focuses on:
 - **Model Comparison:** Evaluating performance versus the classic Black model.
 - **Exotic Derivative Pricing:** Pricing a derivative with conditional payoffs.
 
-[🔗 More Details & Code](./FinalProject)
+[🔗 More Details & Code](./Final_Project)
 
 ---
