@@ -1,11 +1,5 @@
 # Financial Engineering Projects
 
-[![Build Status](https://img.shields.io/travis/yourusername/yourrepo.svg)](https://travis-ci.org/yourusername/yourrepo)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/yourrepo.svg)](https://github.com/yourusername/yourrepo/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/yourusername/yourrepo.svg)](https://github.com/yourusername/yourrepo/network)
-[![GitHub Issues](https://img.shields.io/github/issues/yourusername/yourrepo.svg)](https://github.com/yourusername/yourrepo/issues)
-
 ---
 
 ## Table of Contents
@@ -51,14 +45,14 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **Bermudan Option Pricing:** Explored pricing behavior compared to vanilla European options.
 - **Monte Carlo Enhancements:** Reduced variance using antithetic variables.
 
-[🔗 More Details & Code](./Assignment1)
+[🔗 More Details & Code](./A1_EU_OptionPricing)
 
 ### Assignment 2: Yield Curves and Sensitivities
 - **Bootstrap Yield Curve Construction:** Built discount factor curves and zero rates.
 - **Sensitivity Analysis:** Computed DV01, BPV, and duration for interest rate swaps.
 - **Theoretical Exercises:** Derived bond pricing models and applied the Garman-Kohlhagen formula.
 
-[🔗 More Details & Code](./Assignment2)
+[🔗 More Details & Code](./A2_Bootstrap)
 
 ### Assignment 3: Asset Swaps, CDS, and Python Time-Series Analysis
 - **Asset Swap Spread:** Calculated spreads using market data.
@@ -66,7 +60,7 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **First-to-Default Pricing:** Priced a First-to-Default (FtD) contract with Monte Carlo simulations.
 - **Python Time-Series Analysis:** Implemented log-return plotting and regression analysis.
 
-[🔗 More Details & Code](./Assignment3)
+[🔗 More Details & Code](./A3_Credit_AS_CDS_FtD)
 
 ### Assignment 4: Value at Risk (VaR) and Expected Shortfall (ES)
 - **Variance-Covariance Method:** Computed VaR and ES at a 99% confidence level.
@@ -75,7 +69,7 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **Monte Carlo VaR:** Implemented Delta-Normal and full simulation approaches.
 - **Cliquet Option Pricing:** Explored pricing under counterparty risk.
 
-[🔗 More Details & Code](./Assignment4)
+[🔗 More Details & Code](./A4_RiskManagment)
 
 ### Assignment 5: Advanced Derivative Pricing and Volatility Surface Calibration
 - **Certificate Pricing:** Priced certificates using Monte Carlo simulations.
@@ -83,7 +77,7 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **Lewis Formula and FFT:** Utilized FFT for efficient option pricing.
 - **Volatility Surface Calibration:** Calibrated a surface using a mean-variance mixture model.
 
-[🔗 More Details & Code](./Assignment5)
+[🔗 More Details & Code](./A5_StructuredProducts)
 
 ### Assignment 6: Interest Rate Risk and Hedging
 - **Bootstrap Market Discounts:** Extended bootstrapping for long-term interest rates.
@@ -91,14 +85,14 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **Upfront Payment Calculation:** Priced structured interest rate products.
 - **Delta and Vega Sensitivities:** Developed hedging strategies with swaps and caps.
 
-[🔗 More Details & Code](./Assignment6)
+[🔗 More Details & Code](./A6_StructuredProducts)
 
 ### Assignment 7: Bermudan Swaptions and Certificate Pricing
 - **Bermudan Swaption Pricing:** Applied the Hull-White model with tree-based methods.
 - **Certificate Pricing via NIG Model:** Employed FFT and Monte Carlo methods.
 - **Black Model Adjustments:** Evaluated the impact of digital risk adjustments.
 
-[🔗 More Details & Code](./Assignment7)
+[🔗 More Details & Code](./A7_StructuredProducts)
 
 ---
 
@@ -109,21 +103,21 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **Feature Selection:** Identified key predictors for time-series models.
 - **Seasonality Analysis:** Explored seasonal trends impacting energy prices.
 
-[🔗 More Details & Code](./EPLF_Assignment1)
+[🔗 More Details & Code](./Electricity_Price_Load_Forecasting_1)
 
 ### EPLF Assignment 2: Deep Neural Networks (DNN) Hyperparameter Tuning
 - **Hyperparameter Optimization:** Used Optuna for random search optimization.
 - **Loss Function Minimization:** Analyzed different configurations and their effects.
 - **DNN Performance:** Examined overfitting and generalization in deep models.
 
-[🔗 More Details & Code](./EPLF_Assignment2)
+[🔗 More Details & Code](./Electricity_Price_Load_Forecasting_2)
 
 ### EPLF Assignment 3: Distributional Neural Networks and Quantile Regression
 - **Quantile Regression Neural Networks:** Captured data distribution boundaries with pinball loss.
 - **Distributional Neural Networks (DNN):** Modeled probabilistic forecasting using Normal and Johnson's SU distributions.
 - **Model Comparison:** Evaluated performance using Pinball and Winkler scores.
 
-[🔗 More Details & Code](./EPLF_Assignment3)
+[🔗 More Details & Code](./Electricity_Price_Load_Forecasting_3)
 
 ---
 
@@ -134,14 +128,14 @@ Explore interactive notebooks and detailed documentation for each project. Use t
 - **Z-Spread Calculation:** Aligned defaultable and risk-free bond prices using parallel shifts.
 - **Market-Implied Transition Matrix:** Developed transition matrices for rating migrations.
 
-[🔗 More Details & Code](./RM_Assignment1)
+[🔗 More Details & Code](./Assignment1_RM)
 
 ### RM Assignment 2: Present Value and Credit VaR
 - **Present Value Calculation:** Evaluated present value with Monte Carlo simulations, accounting for default scenarios.
 - **Credit VaR Simulation:** Assessed risk under different correlation conditions.
 - **Concentration Risk Analysis:** Demonstrated the benefits of diversification.
 
-[🔗 More Details & Code](./RM_Assignment2)
+[🔗 More Details & Code](./Assignment2_RM)
 
 ---
 
@@ -155,15 +149,6 @@ This final project focuses on:
 - **Model Comparison:** Evaluating performance versus the classic Black model.
 - **Exotic Derivative Pricing:** Pricing a derivative with conditional payoffs.
 
-[🔗 More Details & Code](./Multivariate_Pricing)
+[🔗 More Details & Code](./FinalProject)
 
 ---
-
-## Contributing
-
-Contributions are welcome! To contribute:
-
-1. **Fork** the repository.
-2. Create a feature branch:  
-   ```bash
-   git checkout -b feature/your-feature
