@@ -1,95 +1,154 @@
 # Financial Engineering Projects
-This repository contains a series of assignments for the Financial Engineering course (2023-2024) developed by Group 16. The projects cover a wide range of topics related to financial derivatives, pricing models, and numerical methods. Below is a summary of the key topics covered in each assignment.
+
+---
+
+## Table of Contents
+- [Overview](#overview)
+- [Assignments](#assignments)
+  - [Assignment 1: Option Pricing and Error Analysis](#assignment-1-option-pricing-and-error-analysis)
+  - [Assignment 2: Yield Curves and Sensitivities](#assignment-2-yield-curves-and-sensitivities)
+  - [Assignment 3: Asset Swaps, CDS, and Python Time-Series Analysis](#assignment-3-asset-swaps-cds-and-python-time-series-analysis)
+  - [Assignment 4: Value at Risk (VaR) and Expected Shortfall (ES)](#assignment-4-value-at-risk-var-and-expected-shortfall-es)
+  - [Assignment 5: Advanced Derivative Pricing and Volatility Surface Calibration](#assignment-5-advanced-derivative-pricing-and-volatility-surface-calibration)
+  - [Assignment 6: Interest Rate Risk and Hedging](#assignment-6-interest-rate-risk-and-hedging)
+  - [Assignment 7: Bermudan Swaptions and Certificate Pricing](#assignment-7-bermudan-swaptions-and-certificate-pricing)
+- [Energy Price and Load Forecasting](#energy-price-and-load-forecasting)
+  - [EPLF Assignment 1: Regularization Techniques in Energy Price Forecasting](#eplf-assignment-1-regularization-techniques-in-energy-price-forecasting)
+  - [EPLF Assignment 2: Deep Neural Networks (DNN) Hyperparameter Tuning](#eplf-assignment-2-deep-neural-networks-dnn-hyperparameter-tuning)
+  - [EPLF Assignment 3: Distributional Neural Networks and Quantile Regression](#eplf-assignment-3-distributional-neural-networks-and-quantile-regression)
+- [Risk Management](#risk-management)
+  - [RM Assignment 1: Hazard Rate and Z-Spread Calculation](#rm-assignment-1-hazard-rate-and-z-spread-calculation)
+  - [RM Assignment 2: Present Value and Credit VaR](#rm-assignment-2-present-value-and-credit-var)
+- [Multivariate Pricing for Financial Derivatives](#multivariate-pricing-for-financial-derivatives)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
+- [Additional Features](#additional-features)
+
+---
+
+## Overview
+
+This repository contains a series of assignments for the Financial Engineering course **(2023-2024)** developed by **Group 16**. The projects cover a wide range of topics related to financial derivatives, pricing models, numerical methods, and risk management. Each assignment delves into state-of-the-art techniques—from analytical methods to advanced Monte Carlo simulations and deep learning for time-series analysis.
+
+Explore interactive notebooks and detailed documentation for each project. Use the table of contents to navigate to sections that interest you!
+
+---
+
+## Assignments
 
 ### Assignment 1: Option Pricing and Error Analysis
+- **European Call Option Pricing:** Computed using Black’s formula, CRR binomial tree, and Monte Carlo (MC) methods.
+- **Error Rescaling:** Evaluated pricing error and determined optimal parameters.
+- **Exotic Options:** Implemented pricing for a Knock-In Call option using multiple approaches.
+- **Vega Sensitivity:** Analyzed Vega via numerical and analytical methods.
+- **Bermudan Option Pricing:** Explored pricing behavior compared to vanilla European options.
+- **Monte Carlo Enhancements:** Reduced variance using antithetic variables.
 
-- European Call Option Pricing: Computed using Black’s formula, CRR binomial tree, and Monte Carlo (MC) methods.
-- Error Rescaling: Evaluated the error in pricing using different methods and found optimal parameters for accuracy.
-- Exotic Options: Pricing of a Knock-In Call option using closed-form solutions, CRR, and MC methods.
-- Vega Sensitivity: Analyzed Vega for different options, comparing numerical and analytical results.
-- Bermudan Option Pricing: Applied the CRR method to price a Bermudan option, and studied its behavior compared to vanilla European options.
-- Monte Carlo Enhancements: Used antithetic variables to reduce variance in Monte Carlo simulations.
-  
+[🔗 More Details & Code](./A1_EU_OptionPricing)
+
 ### Assignment 2: Yield Curves and Sensitivities
+- **Bootstrap Yield Curve Construction:** Built discount factor curves and zero rates.
+- **Sensitivity Analysis:** Computed DV01, BPV, and duration for interest rate swaps.
+- **Theoretical Exercises:** Derived bond pricing models and applied the Garman-Kohlhagen formula.
 
-- Bootstrap Yield Curve Construction: Developed a discount factor curve and zero rates using market data, including deposits, futures, and swaps.
-- Sensitivity Analysis: Computed DV01, BPV, and duration for interest rate swaps, analyzing the exposure of a portfolio to interest rate shifts.
-- Theoretical Exercises: Derived bond pricing models and explored the Garman-Kohlhagen formula for European call options with time-dependent rates and volatility.
-  
+[🔗 More Details & Code](./A2_Bootstrap)
+
 ### Assignment 3: Asset Swaps, CDS, and Python Time-Series Analysis
+- **Asset Swap Spread:** Calculated spreads using market data.
+- **CDS Bootstrapping:** Constructed CDS curves via bootstrapping and spline interpolation.
+- **First-to-Default Pricing:** Priced a First-to-Default (FtD) contract with Monte Carlo simulations.
+- **Python Time-Series Analysis:** Implemented log-return plotting and regression analysis.
 
-- Asset Swap Spread: Calculated the Asset Swap Spread over Euribor 3m using market data.
-- CDS Bootstrap: Constructed a CDS curve for various obligors (e.g., Intesa Sanpaolo) using bootstrapping and spline interpolation.
-- First-to-Default Pricing: Priced a First-to-Default (FtD) contract between two obligors using the Li model and Monte Carlo simulations.
-- Python Time-Series Analysis: Implemented basic time-series analysis in Python, including plotting log-returns and performing regression analysis.
+[🔗 More Details & Code](./A3_Credit_AS_CDS_FtD)
 
 ### Assignment 4: Value at Risk (VaR) and Expected Shortfall (ES)
-- Variance-Covariance Method: Computed VaR and ES at a 99% confidence level using a t-distribution for a portfolio of stocks.
-- Historical Simulation and Bootstrap: Evaluated VaR and ES using historical simulation methods and explored their accuracy.
-- Principal Component Analysis (PCA): Applied PCA to reduce dimensionality in VaR estimation.
-- Monte Carlo VaR: Implemented full Monte Carlo simulation and Delta-Normal approaches for VaR analysis.
-- Cliquet Option Pricing: Explored the pricing of a Cliquet option in the presence of counterparty risk​.
+- **Variance-Covariance Method:** Computed VaR and ES at a 99% confidence level.
+- **Historical Simulation & Bootstrap:** Evaluated VaR accuracy.
+- **Principal Component Analysis (PCA):** Applied PCA to reduce dimensionality.
+- **Monte Carlo VaR:** Implemented Delta-Normal and full simulation approaches.
+- **Cliquet Option Pricing:** Explored pricing under counterparty risk.
+
+[🔗 More Details & Code](./A4_RiskManagment)
 
 ### Assignment 5: Advanced Derivative Pricing and Volatility Surface Calibration
-- Certificate Pricing: Priced a certificate based on a basket of ENEL and AXA stocks using Monte Carlo simulations.
-- Digital Option Pricing: Compared different methods (Black-Scholes, implied volatility) for pricing a digital option.
-- Lewis Formula and FFT: Applied the Lewis formula and Fast Fourier Transform (FFT) for efficient pricing of call options.
-- Volatility Surface Calibration: Calibrated a volatility surface using a mean-variance mixture model and analyzed the skew and vega of options​.
+- **Certificate Pricing:** Priced certificates using Monte Carlo simulations.
+- **Digital Option Pricing:** Compared methods including Black-Scholes and implied volatility.
+- **Lewis Formula and FFT:** Utilized FFT for efficient option pricing.
+- **Volatility Surface Calibration:** Calibrated a surface using a mean-variance mixture model.
+
+[🔗 More Details & Code](./A5_StructuredProducts)
 
 ### Assignment 6: Interest Rate Risk and Hedging
-- Bootstrap Market Discounts: Extended the bootstrapping technique to model discount factors and zero rates for interest rates beyond 12 years.
-- Caplet Pricing and Spot Volatility Calibration: Calibrated spot volatilities from market cap prices using the Bachelier formula.
-- Upfront Payment Calculation: Priced upfront payments for structured interest rate products.
-- Delta and Vega Sensitivities: Computed delta and vega sensitivities for various buckets of maturities and strikes, and developed a hedging strategy using swaps and caps​.
+- **Bootstrap Market Discounts:** Extended bootstrapping for long-term interest rates.
+- **Caplet Pricing:** Calibrated spot volatilities using the Bachelier formula.
+- **Upfront Payment Calculation:** Priced structured interest rate products.
+- **Delta and Vega Sensitivities:** Developed hedging strategies with swaps and caps.
+
+[🔗 More Details & Code](./A6_StructuredProducts)
 
 ### Assignment 7: Bermudan Swaptions and Certificate Pricing
-- Bermudan Swaption Pricing: Priced a Bermudan swaption using the Hull-White model, exploring both closed-form solutions and tree-based methods.
-- Certificate Pricing via NIG Model: Priced structured bonds using the Normal Inverse Gaussian (NIG) model, Fast Fourier Transform (FFT), and other methods (Variance Gamma and Monte Carlo).
-- Black Model Adjustments: Evaluated the impact of digital risk adjustments on the Black model for certificate pricing.
+- **Bermudan Swaption Pricing:** Applied the Hull-White model with tree-based methods.
+- **Certificate Pricing via NIG Model:** Employed FFT and Monte Carlo methods.
+- **Black Model Adjustments:** Evaluated the impact of digital risk adjustments.
+
+[🔗 More Details & Code](./A7_StructuredProducts)
+
+---
 
 ## Energy Price and Load Forecasting
 
 ### EPLF Assignment 1: Regularization Techniques in Energy Price Forecasting
-- Lasso, Ridge, and Elastic Net Regression: Explored regularization techniques to improve forecasting accuracy for electricity prices.
-- Feature Selection: Demonstrated the importance of feature selection in time-series forecasting using LASSO.
-- Seasonality Analysis: Investigated the effects of seasonality on energy price predictions using the Elastic Net model.
+- **Lasso, Ridge, and Elastic Net Regression:** Improved forecasting accuracy for electricity prices.
+- **Feature Selection:** Identified key predictors for time-series models.
+- **Seasonality Analysis:** Explored seasonal trends impacting energy prices.
+
+[🔗 More Details & Code](./Electricity_Price_Load_Forecasting_1)
 
 ### EPLF Assignment 2: Deep Neural Networks (DNN) Hyperparameter Tuning
-- Hyperparameter Optimization: Employed Optuna to perform random search for optimizing learning rate and hidden layer size in a DNN.
-- Loss Function Minimization: Compared different configurations of learning rate and hidden size, evaluating their impact on the loss function.
-- DNN Performance: Analyzed the effect of hyperparameters on overfitting and generalization performance in a DNN​.
+- **Hyperparameter Optimization:** Used Optuna for random search optimization.
+- **Loss Function Minimization:** Analyzed different configurations and their effects.
+- **DNN Performance:** Examined overfitting and generalization in deep models.
+
+[🔗 More Details & Code](./Electricity_Price_Load_Forecasting_2)
 
 ### EPLF Assignment 3: Distributional Neural Networks and Quantile Regression
-- Quantile Regression Neural Networks: Applied quantile regression to capture boundaries of data distribution using pinball loss functions.
-- Distributional Neural Networks (DNN): Implemented DNNs using Normal and Johnson's SU distributions to capture probabilistic forecasting, tuning models via pinball and log-likelihood functions.
-- Model Comparison: Compared model performance using Pinball and Winkler scores, finding JSU-DNN to perform best overall​.
+- **Quantile Regression Neural Networks:** Captured data distribution boundaries with pinball loss.
+- **Distributional Neural Networks (DNN):** Modeled probabilistic forecasting using Normal and Johnson's SU distributions.
+- **Model Comparison:** Evaluated performance using Pinball and Winkler scores.
 
-## Risk Managment
+[🔗 More Details & Code](./Electricity_Price_Load_Forecasting_3)
+
+---
+
+## Risk Management
 
 ### RM Assignment 1: Hazard Rate and Z-Spread Calculation
-- Hazard Rate Curve Bootstrapping: Constructed hazard rate curves for investment grade (IG) and high yield (HY) bonds using bootstrapping and solving for hazard rates using MATLAB.
-- Z-Spread Calculation: Calculated the Z-spread for IG and HY bonds by applying a parallel shift to the zero-rate curve to equalize defaultable and risk-free bond prices.
-- Market-Implied Transition Matrix: Developed a time-homogeneous transition matrix for rating migrations, using the hazard rate curves​.
+- **Hazard Rate Curve Bootstrapping:** Constructed hazard rate curves for investment grade (IG) and high yield (HY) bonds.
+- **Z-Spread Calculation:** Aligned defaultable and risk-free bond prices using parallel shifts.
+- **Market-Implied Transition Matrix:** Developed transition matrices for rating migrations.
+
+[🔗 More Details & Code](./Assignment1_RM)
 
 ### RM Assignment 2: Present Value and Credit VaR
-- Present Value Calculation: Evaluated present value using Monte Carlo simulations, considering survival probabilities and default scenarios for Investment Grade (IG) and High Yield (HY) bonds.
-- Credit VaR Simulation: Simulated Credit VaR under different correlation scenarios, examining the impact of default and migration risks.
-- Concentration Risk Analysis: Assessed the impact of concentration risk by varying the number of obligors, demonstrating the importance of diversification.
+- **Present Value Calculation:** Evaluated present value with Monte Carlo simulations, accounting for default scenarios.
+- **Credit VaR Simulation:** Assessed risk under different correlation conditions.
+- **Concentration Risk Analysis:** Demonstrated the benefits of diversification.
 
+[🔗 More Details & Code](./Assignment2_RM)
 
-### Multivariate Pricing for Financial Derivatives
-This repository contains the Final Project for the Financial Engineering course AY 2023-2024. In this project, we develop and calibrate multivariate models based on Lévy processes for pricing structured derivatives on equity indices, specifically targeting the S&P 500 and EURO STOXX 50 markets.
+---
 
-The project focuses on:
+## Multivariate Pricing for Financial Derivatives
 
-Modeling Forward Prices: We assume that the forward price for asset i at time t is given by F_i(t, T) = F_i(0, T) * exp(X_i(t) + p_i * t) where X_i(t) = Y_i(t) + a_i * Z(t) is a multivariate Lévy process with Normal Inverse Gaussian (NIG) marginals.
+This final project focuses on:
+- **Multivariate Lévy Model:** Calibrating models with NIG marginals for S&P 500 and EURO STOXX 50.
+- **Martingality and Drift Compensation:** Ensuring forward prices are martingales.
+- **Calibration Techniques:** Joint calibration of marginal and dependence parameters.
+- **Synthetic Forwards:** Using put/call parity for forward price computation.
+- **Model Comparison:** Evaluating performance versus the classic Black model.
+- **Exotic Derivative Pricing:** Pricing a derivative with conditional payoffs.
 
-Martingality and Drift Compensation: We derive the drift compensators p_i so that the forward price processes are martingales.
+[🔗 More Details & Code](./Final_Project)
 
-Calibration of the Multivariate Lévy Model: The project calibrates the marginal parameters (kappa, theta, sigma) jointly for both markets under the constraint (sigma_1^2) / (theta_1^2 * kappa_1) = (sigma_2^2) / (theta_2^2 * kappa_2) = c and further calibrates the dependence parameters to match the market-implied correlation with historical data.
-
-Synthetic Forwards and Discount Factors: We compute discount factors and forward prices using synthetic forward techniques (via Put/Call parity) as an alternative to classical bootstrap methods.
-
-Comparison with the Black Model: In order to assess model performance, we also calibrate a plain Black model and compare its forward exponents, volatility surfaces, and pricing accuracy to those of the Lévy model.
-
-Exotic Derivative Pricing: Finally, we price a derivative with a payoff defined as: (S_1(t) - S_1(0))^+ * 1_{S_2(t) < 0.95 * S_2(0)} and discuss the advantages and drawbacks of each modeling approach.
+---
