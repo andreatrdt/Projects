@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Our Team</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #ffffff;
+      color: #003366;
+      padding: 2rem;
+      text-align: center;
+      width: 90%;
+    }
+
+    h1 {
+      color: #004080;
+      margin-bottom: 1rem;
+    }
+
+    h2 {
+      color: #004080;
+      margin-top: 2rem;
+    }
+
+    /* Navigation menu */
+    .nav-menu {
+      background-color: #004080;
+      padding: 1rem;
+      text-align: center;
+      display: flex;
+      justify-content: center;
+      gap: 2rem;
+    }
+
+    .nav-menu a {
+      color: white;
+      font-size: 1.2rem;
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+    }
+
+    .nav-menu a:hover {
+      background-color: #003366;
+    }
+
+    /* Layout for team boxes */
+    .team-container {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0rem;
+      margin-top: 2rem;
+    }
+
+    .team-box {
+      width: 15%;
+      background-color: #e6f0ff;
+      padding: 1rem;
+      border-radius: 8px;
+      border: 2px solid #0059b3;
+      text-align: center;
+    }
+
+    .team-box img {
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+    }
+
+    .team-box .name {
+      font-size: 1.2rem;
+      color: #003366;
+      margin-top: 1rem;
+    }
+
+    .team-box .role {
+      font-size: 1rem;
+      color: #003366;
+      margin-top: 0.5rem;
+    }
+
+    /* Button to go back to the home page */
+    .back-btn {
+      margin-top: 2rem;
+      padding: 1rem 2rem;
+      background-color: #0059b3;
+      color: white;
+      font-size: 1.2rem;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    .back-btn:hover {
+      background-color: #003d80;
+    }
+
+    /* Responsive design */
+    @media (max-width: 768px) {
+      .team-box {
+        width: 40%;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .team-box {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+
+    <!-- Navigation Menu -->
+  <div class="nav-menu">
+    <a href="/">Home</a>
+    <a href="/team">Team</a>
+    <a href="/predict">Prediction</a>
+  </div>
+  <h1>Meet Our Team</h1>
+
+  <div class="team-container">
+    <!-- Team Box 1 -->
+    <div class="team-box">
+      <img src="{{ url_for('static', filename='images/team_giacomo.png') }}" alt="Team Member 1" />
+      <div class="name">Giacomo Manfredi</div>
+      <div class="role">Mathematical Engineer</div>
+      <a href="https://www.linkedin.com/in/giacomo-manfredi-54a746303" class="linkedin" target="_blank">LinkedIn</a>
+    </div>
+
+    <!-- Team Box 2 -->
+    <div class="team-box">
+      <img src="{{ url_for('static', filename='images/team_nicolo1.png') }}" alt="Team Member 2" />
+      <div class="name">Nicolò Toia</div>
+      <div class="role">Mathematical Engineer</div>
+      <a href="https://www.linkedin.com/in/nicolotoia?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app " class="linkedin" target="_blank">LinkedIn</a>
+    </div>
+
+    <!-- Team Box 3 -->
+    <div class="team-box">
+      <img src="{{ url_for('static', filename='images/team_andrea.png') }}" alt="Team Member 3" />
+      <div class="name">Andrea Tarditi</div>
+      <div class="role">Mathematical Engineer</div>
+      <a href="https://www.linkedin.com/in/andrea-tarditi?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app " class="linkedin" target="_blank">LinkedIn</a>
+    </div>
+
+    <!-- Team Box 4 -->
+    <div class="team-box">
+      <img src="{{ url_for('static', filename='images/team_matteo.jpg') }}" alt="Team Member 4" />
+      <div class="name">Matteo Torba</div>
+      <div class="role">Mathematical Engineer</div>
+      <a href="https://www.linkedin.com/in/matteo-torba?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app " class="linkedin" target="_blank">LinkedIn</a>
+    </div>
+
+    <!-- Team Box 5 -->
+    <div class="team-box">
+      <img src="{{ url_for('static', filename='images/team_leonardo1.jpg') }}" alt="Team Member 5" />
+      <div class="name">Leonardo Pascotto</div>
+      <div class="role">Mathematical Engineer</div>
+      <a href="https://www.linkedin.com/in/leonardo-pascotto-244894188?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app " class="linkedin" target="_blank">LinkedIn</a>
+    </div>
+  </div>
+
+</body>
+</html>

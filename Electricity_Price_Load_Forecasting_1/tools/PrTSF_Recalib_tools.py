@@ -146,6 +146,7 @@ def load_data_model_configs(task_name: str, exper_setup: str, run_id: str):
     Load experiment configurations from json and build the handler object
     """
     path = os.path.join(os.getcwd(), 'experiments', 'tasks', task_name, exper_setup, run_id,'exper_configs.json')
+    
     # Load experiment settings from json
     with open(path) as f:
         expe_confs = json.load(f)
