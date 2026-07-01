@@ -6,7 +6,7 @@ import numpy as np
 MARKET_OPEN_SECONDS = 9.5 * 3600
 from utils import t_rel
 t_start = t_rel(13, 0, 0)
-PLOT = True
+PLOT = False
 SAVE_DIR = "cache"
 _ANCHOR_DATE = pd.to_datetime("1970-01-01")
 
