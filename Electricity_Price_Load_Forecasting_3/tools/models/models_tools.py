@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 
 from tools.models.DNN import DNNRegressor
 from tools.models.ARX import ARXRegressor
+from tools.models.SeqModel import SequenceRegressor
 
 
 def get_model_class_from_conf(conf):
@@ -27,6 +28,8 @@ def get_model_class_from_conf(conf):
         model_class = ARXRegressor
     elif conf == 'DNN':
         model_class = DNNRegressor
+    elif conf == 'SEQ':
+        model_class = SequenceRegressor
     else:
         sys.exit('ERROR: unknown model_class')
     return model_class
@@ -88,20 +91,24 @@ class TensorflowRegressor():
 
         # Instantiate the model
         if settings['model_class'] == 'DNN':
-            # get input size for the chosen model architecture
             settings['input_size'] = DNNRegressor.build_model_input_from_series(x=sample_x,
                                                                                 col_names=self.x_columns_names,
                                                                                 pred_horiz=self.pred_horiz).shape[1]
-            # Build the model architecture
             self.regressor = DNNRegressor(settings, loss)
 
         elif settings['model_class'] == 'ARX':
-            # get input size for the chosen model architecture
             settings['input_size'] = ARXRegressor.build_model_input_from_series(x=sample_x,
                                                                                 col_names=self.x_columns_names,
                                                                                 pred_horiz=self.pred_horiz).shape[1]
-            # Build the model architecture
             self.regressor = ARXRegressor(settings, loss)
+
+        elif settings['model_class'] == 'SEQ':
+            seq_x = SequenceRegressor.build_model_input_from_series(x=sample_x,
+                                                                     col_names=self.x_columns_names,
+                                                                     pred_horiz=self.pred_horiz)
+            settings['input_timesteps'] = seq_x.shape[1]
+            settings['input_features'] = seq_x.shape[2]
+            self.regressor = SequenceRegressor(settings, loss)
         else:
             sys.exit('ERROR: unknown model_class')
 
