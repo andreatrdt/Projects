@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from tools.models.DNN import DNNRegressor
 from tools.models.ARX import ARXRegressor
 
+
 def get_model_class_from_conf(conf):
     """
     Map the model class depending on the config name
@@ -63,9 +64,10 @@ class PinballLoss(keras.losses.Loss):
             "name": self.name,
         }
 
+
 class TensorflowRegressor():
     """
-    Implementation of the Tenforflow regressor
+    Implementation of the Tensorflow regressor.
     """
     def __init__(self, settings, sample_x):
         self.settings = settings
@@ -76,53 +78,58 @@ class TensorflowRegressor():
         # Map the loss to be used
         if settings['PF_method'] == 'qr' or settings['PF_method'] == 'qr-arcsinh':
             loss = PinballLoss(quantiles=settings['target_quantiles'])
-        elif settings['PF_method']=='point':
+        elif settings['PF_method'] == 'point':
             loss = 'mae'
         elif (settings['PF_method'] == 'Normal'
-            or settings['PF_method'] == 'JSU'
-        ):
+              or settings['PF_method'] == 'JSU'):
             loss = lambda y, rv_y: -rv_y.log_prob(y)
         else:
             sys.exit('ERROR: unknown PF_method config!')
 
         # Instantiate the model
-        if settings['model_class']=='DNN':
+        if settings['model_class'] == 'DNN':
             # get input size for the chosen model architecture
-            settings['input_size']=DNNRegressor.build_model_input_from_series(x=sample_x,
-                                                                              col_names=self.x_columns_names,
-                                                                              pred_horiz=self.pred_horiz).shape[1]
+            settings['input_size'] = DNNRegressor.build_model_input_from_series(x=sample_x,
+                                                                                col_names=self.x_columns_names,
+                                                                                pred_horiz=self.pred_horiz).shape[1]
             # Build the model architecture
             self.regressor = DNNRegressor(settings, loss)
 
-        elif  settings['model_class']=='ARX':
+        elif settings['model_class'] == 'ARX':
             # get input size for the chosen model architecture
-            settings['input_size']=ARXRegressor.build_model_input_from_series(x=sample_x,
-                                                                              col_names=self.x_columns_names,
-                                                                              pred_horiz=self.pred_horiz).shape[1]
+            settings['input_size'] = ARXRegressor.build_model_input_from_series(x=sample_x,
+                                                                                col_names=self.x_columns_names,
+                                                                                pred_horiz=self.pred_horiz).shape[1]
             # Build the model architecture
             self.regressor = ARXRegressor(settings, loss)
         else:
             sys.exit('ERROR: unknown model_class')
 
         # Map handler to convert distributional output to quantiles or distribution parameters
-        if (settings['PF_method'] == 'Normal'):
+        if settings['PF_method'] == 'Normal':
             self.output_handler = self.__pred_Normal_params__
         elif settings['PF_method'] == 'JSU':
             self.output_handler = self.__pred_JSU_params__
         else:
-            self.output_handler =self.__quantiles_out__
+            self.output_handler = self.__quantiles_out__
 
     def predict(self, x):
         return self.output_handler(self.regressor.predict(x))
 
     def fit(self, train_x, train_y, val_x, val_y, verbose=0, pruning_call=None, plot_history=False):
-        history = self.regressor.fit(train_x, train_y, val_x, val_y, verbose=0, pruning_call=None)
+        history = self.regressor.fit(train_x=train_x,
+                                     train_y=train_y,
+                                     val_x=val_x,
+                                     val_y=val_y,
+                                     verbose=verbose,
+                                     pruning_call=pruning_call)
         if plot_history:
             plt.plot(history.history['loss'], label='train_loss')
             plt.plot(history.history['val_loss'], label='vali_loss')
             plt.grid()
             plt.legend()
             plt.show()
+        return history
 
     def evaluate(self, x, y):
         return self.regressor.evaluate(x=x, y=y)
@@ -138,7 +145,7 @@ class TensorflowRegressor():
         loc = tf.expand_dims(pred_dists.loc, axis=-1)
         scale = tf.expand_dims(pred_dists.scale, axis=-1)
         # Expand dimension to enable concat in ensemble
-        return tf.expand_dims(tf.concat([loc,scale], axis=-1), axis=2)
+        return tf.expand_dims(tf.concat([loc, scale], axis=-1), axis=2)
 
     def __pred_JSU_params__(self, pred_dists: tfp.distributions):
         loc = tf.expand_dims(pred_dists.loc, axis=-1)
@@ -156,20 +163,20 @@ class Ensemble():
     def __init__(self, settings):
         # store configs for internal use
         self.settings = settings
-        # map the methods to use for aggretation and quantile building depending on the configs
-        if (self.settings['PF_method'] == 'point'):
+        # map the methods to use for aggregation and quantile building depending on the configs
+        if self.settings['PF_method'] == 'point':
             self.ensemble_aggregator = self.__aggregate_de_quantiles__
             self._build_test_PIs = self.__get_qr_PIs__
-        elif (self.settings['PF_method'] == 'qr'):
+        elif self.settings['PF_method'] == 'qr':
             self.ensemble_aggregator = self.__aggregate_de_quantiles__
             self._build_test_PIs = self.__get_qr_PIs__
-        elif (self.settings['PF_method'] == 'qr-arcsinh'):
+        elif self.settings['PF_method'] == 'qr-arcsinh':
             self.ensemble_aggregator = self.__aggregate_de_quantiles__
             self._build_test_PIs = self.__get_qr_PIs__
-        elif (self.settings['PF_method'] == 'Normal'):
+        elif self.settings['PF_method'] == 'Normal':
             self.ensemble_aggregator = self.__aggregate_de__
             self._build_test_PIs = self.__build_Normal_PIs__
-        elif (self.settings['PF_method'] == 'JSU'):
+        elif self.settings['PF_method'] == 'JSU':
             self.ensemble_aggregator = self.__aggregate_de__
             self._build_test_PIs = self.__build_JSU_PIs__
         else:
@@ -185,12 +192,12 @@ class Ensemble():
 
     @staticmethod
     def __aggregate_de__(ens_comp_preds):
-        # aggregate by concatenation, for point a distributional settings
+        # aggregate by concatenation, for point and distributional settings
         return np.concatenate(ens_comp_preds, axis=2)
 
     @staticmethod
     def __aggregate_de_quantiles__(ens_comp_preds):
-        # aggregate by a uniform vincentization
+        # aggregate by uniform vincentization
         return np.mean(np.concatenate(ens_comp_preds, axis=2), axis=2)
 
     @staticmethod
@@ -200,26 +207,26 @@ class Ensemble():
 
     @staticmethod
     def __build_Normal_PIs__(preds_test, settings):
-        # for each de component, sample, aggregate samples and compute quantiles
+        # for each ensemble component, sample, aggregate samples and compute quantiles
         pred_samples = []
         for k in range(preds_test.shape[2]):
             pred_samples.append(tfd.Normal(
-                loc=preds_test[:,:,k,0],
-                scale=preds_test[:,:,k,1]).sample(10000).numpy())
+                loc=preds_test[:, :, k, 0],
+                scale=preds_test[:, :, k, 1]).sample(10000).numpy())
         return np.transpose(np.quantile(np.concatenate(pred_samples, axis=0),
                                         q=settings['target_quantiles'], axis=0),
                             axes=(1, 2, 0)).reshape(-1, len(settings['target_quantiles']))
 
     @staticmethod
     def __build_JSU_PIs__(preds_test, settings):
-        # for each de component, sample, aggregate samples and compute quantiles
+        # for each ensemble component, sample, aggregate samples and compute quantiles
         pred_samples = []
         for k in range(preds_test.shape[2]):
             pred_samples.append(tfd.JohnsonSU(
-                loc=preds_test[:,:,k,0],
-                scale=preds_test[:,:,k,1],
-                tailweight=preds_test[:,:,k,2],
-                skewness=preds_test[:,:,k,3]).sample(10000).numpy())
+                loc=preds_test[:, :, k, 0],
+                scale=preds_test[:, :, k, 1],
+                tailweight=preds_test[:, :, k, 2],
+                skewness=preds_test[:, :, k, 3]).sample(10000).numpy())
         return np.transpose(np.quantile(np.concatenate(pred_samples, axis=0),
                                         q=settings['target_quantiles'], axis=0),
                             axes=(1, 2, 0)).reshape(-1, len(settings['target_quantiles']))
