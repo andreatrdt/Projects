@@ -64,6 +64,20 @@ EXPERIMENTS = {
 }
 
 
+def get_pred_horizon(configs: Dict) -> int:
+    """
+    Return the prediction horizon.
+
+    In this codebase, `pred_horiz` originally lives in `data_config`. The recalibration
+    engine also copies it into `model_config`, but that only happens after the engine is
+    instantiated. When we load saved predictions directly, `model_config['pred_horiz']`
+    may therefore be missing. This helper handles both cases.
+    """
+    if "pred_horiz" in configs["model_config"]:
+        return int(configs["model_config"]["pred_horiz"])
+    return int(configs["data_config"].pred_horiz)
+
+
 def build_target_quantiles(target_alpha: List[float]) -> List[float]:
     """Build central-interval quantiles from alpha levels, including the median."""
     target_quantiles = [0.5]
@@ -231,7 +245,7 @@ def score_experiment(
     output_dir: Path,
 ) -> Dict:
     """Compute Pinball/Winkler scores and write per-model artefacts."""
-    pred_steps = configs["model_config"]["pred_horiz"]
+    pred_steps = get_pred_horizon(configs)
     quantiles = build_target_quantiles(configs["model_config"]["target_alpha"])
     target_col = get_target_column(predictions, task_name)
     quantile_cols = get_quantile_columns(predictions, quantiles)
@@ -319,6 +333,7 @@ def main() -> None:
 
     summary_rows = []
     predictions_by_model = {}
+    configs_by_model = {}
 
     for model_name, exp_conf in EXPERIMENTS.items():
         predictions, configs = load_or_run_experiment(
@@ -329,6 +344,7 @@ def main() -> None:
             run_recalibration=args.run_recalibration,
         )
         predictions_by_model[model_name] = predictions
+        configs_by_model[model_name] = configs
         summary_rows.append(
             score_experiment(
                 model_name=model_name,
@@ -343,10 +359,11 @@ def main() -> None:
     summary.to_csv(output_dir / "model_comparison_summary.csv", index=False)
 
     best_model = summary.iloc[0]["model"]
+    best_configs = configs_by_model[best_model]
     best_bands = build_price_bands(
         predictions_by_model[best_model],
         task_name=args.task_name,
-        quantiles=build_target_quantiles(configs["model_config"]["target_alpha"]),
+        quantiles=build_target_quantiles(best_configs["model_config"]["target_alpha"]),
     )
     best_bands.to_csv(output_dir / "best_model_price_bands.csv")
 
