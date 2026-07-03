@@ -1,2 +1,3 @@
 class SequenceRegressor:
-    pass
+    def build(self):
+        return 'sequence recurrent model'
