@@ -14,6 +14,8 @@ import tensorflow_probability as tfp
 from tensorflow_probability import distributions as tfd
 import os
 import shutil
+import tempfile
+import uuid
 import matplotlib.pyplot as plt
 
 
@@ -30,8 +32,8 @@ class DNNRegressor:
                                   )(x_in))
         for hl in range(self.settings['n_hidden_layers'] - 1):
             x = tf.keras.layers.Dense(self.settings['hidden_size'],
-                                        activation=self.settings['activation'],
-                                        )(x)
+                                      activation=self.settings['activation'],
+                                      )(x)
         if self.settings['PF_method'] == 'point':
             out_size = 1
             logit = tf.keras.layers.Dense(self.settings['pred_horiz'] * out_size,
@@ -42,15 +44,15 @@ class DNNRegressor:
         elif self.settings['PF_method'] == 'qr' or self.settings['PF_method'] == 'qr-arcsinh':
             out_size = len(self.settings['target_quantiles'])
             logit = tf.keras.layers.Dense(self.settings['pred_horiz'] * out_size,
-                                            activation='linear',
-                                            )(x)
+                                          activation='linear',
+                                          )(x)
             # we make the output flat
             output = tf.keras.layers.Reshape((self.settings['pred_horiz'], out_size))(logit)
-            # Fix quantile crossing (by simply sortin)
-            output= tf.keras.layers.Lambda(lambda x: tf.sort(x, axis=-1))(output)
+            # Fix quantile crossing by sorting the output quantiles for each forecast hour.
+            output = tf.keras.layers.Lambda(lambda x: tf.sort(x, axis=-1))(output)
 
         elif self.settings['PF_method'] == 'Normal':
-            out_size = 2 # mean and std
+            out_size = 2  # mean and std
             logit = tf.keras.layers.Dense(self.settings['pred_horiz'] * out_size,
                                           activation='linear',
                                           )(x)
@@ -58,29 +60,29 @@ class DNNRegressor:
                 lambda t: tfd.Normal(
                     loc=t[..., :self.settings['pred_horiz']],
                     scale=1e-3 + 3 * tf.math.softplus(0.05 * t[..., self.settings['pred_horiz']:])
-            ))(logit)
+                ))(logit)
 
         # implement the Johnson SU distribution
         elif self.settings['PF_method'] == 'JSU':
             out_size = 4
             logit = tf.keras.layers.Dense(self.settings['pred_horiz'] * out_size,
-                                            activation='linear',
-                                            )(x)
-            
+                                          activation='linear',
+                                          )(x)
+
             output = tfp.layers.DistributionLambda(
                 lambda t: tfd.JohnsonSU(
-                    loc = t[..., :self.settings['pred_horiz']],
-                    scale = 1e-3 + 3 * tf.math.softplus(t[..., self.settings['pred_horiz']:2*self.settings['pred_horiz']]),
-                    tailweight = 1 + 3 * tf.math.softplus(t[..., 2*self.settings['pred_horiz']:3*self.settings['pred_horiz']]),
-                    skewness = t[..., 3*self.settings['pred_horiz']:]
+                    loc=t[..., :self.settings['pred_horiz']],
+                    scale=1e-3 + 3 * tf.math.softplus(t[..., self.settings['pred_horiz']:2*self.settings['pred_horiz']]),
+                    tailweight=1 + 3 * tf.math.softplus(t[..., 2*self.settings['pred_horiz']:3*self.settings['pred_horiz']]),
+                    skewness=t[..., 3*self.settings['pred_horiz']:]
                 )
             )(logit)
-            
+
         else:
             sys.exit('ERROR: unknown PF_method config!')
 
         # Create model
-        self.model= tf.keras.Model(inputs=[x_in], outputs=[output])
+        self.model = tf.keras.Model(inputs=[x_in], outputs=[output])
         # Compile the model
         self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=self.settings['lr']),
                            loss=loss)
@@ -97,17 +99,16 @@ class DNNRegressor:
                                               patience=self.settings['patience'],
                                               restore_best_weights=False)
 
-        # Create folder to temporally store checkpoints
-        checkpoint_path = os.path.join(os.getcwd(), 'tmp_checkpoints', 'cp.weights.h5')
-        checkpoint_dir = os.path.dirname(checkpoint_path)
-        if not os.path.exists(checkpoint_dir):
-            os.makedirs(checkpoint_dir)
+        # Use a unique temporary checkpoint for every fit call.
+        # This avoids Windows/HDF5 errors when the recalibration loop trains many models sequentially.
+        checkpoint_dir = tempfile.mkdtemp(prefix="tf_ckpt_")
+        checkpoint_path = os.path.join(checkpoint_dir, f"cp_{uuid.uuid4().hex}.weights.h5")
 
         cp = tf.keras.callbacks.ModelCheckpoint(filepath=checkpoint_path,
                                                 monitor="val_loss", mode="min",
                                                 save_best_only=True,
                                                 save_weights_only=True, verbose=0)
-        if pruning_call==None:
+        if pruning_call is None:
             callbacks = [es, cp]
         else:
             callbacks = [es, cp, pruning_call]
@@ -119,10 +120,10 @@ class DNNRegressor:
                                  batch_size=self.settings['batch_size'],
                                  callbacks=callbacks,
                                  verbose=verbose)
-        # Load best weights: do not use restore_best_weights from early stop since works only in case it stops training
+        # Load best weights: do not use restore_best_weights from early stop since it works only if early stopping is triggered.
         self.model.load_weights(checkpoint_path)
-        # delete temporary folder
-        shutil.rmtree(checkpoint_dir)
+        # Delete temporary folder. ignore_errors avoids noisy failures if Windows keeps a handle open briefly.
+        shutil.rmtree(checkpoint_dir, ignore_errors=True)
         return history
 
     def predict(self, x):
