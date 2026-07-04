@@ -1,0 +1,7 @@
+{
+    "hidden_size": 64,
+    "n_hidden_layers": 1,
+    "lr": 0.001,
+    "activation": "tanh",
+    "dense_activation": "softplus"
+}

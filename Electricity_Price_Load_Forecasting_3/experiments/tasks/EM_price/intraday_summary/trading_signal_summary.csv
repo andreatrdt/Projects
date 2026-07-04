@@ -1,0 +1,4 @@
+model,threshold,n_signals,hit_rate,avg_realized_edge_on_signal
+LASSO-ARX,5.0,279,0.953405017921147,1.7437275985663079
+LSTM/sequence,5.0,323,0.8699690402476781,0.7914551083591332
+Quantile regression median (QR-DNN),5.0,307,0.9348534201954397,0.6652442996742671
