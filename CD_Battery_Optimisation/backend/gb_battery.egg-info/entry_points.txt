@@ -1,0 +1,2 @@
+[console_scripts]
+gb-battery = gb_battery.cli:main

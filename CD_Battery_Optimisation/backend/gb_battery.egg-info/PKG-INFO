@@ -1,0 +1,34 @@
+Metadata-Version: 2.4
+Name: gb-battery
+Version: 0.1.0
+Summary: GB Battery Co-Optimisation Terminal — research & decision-support engine for GB battery trading.
+Author: Andrea Tarditi
+License: MIT
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.111
+Requires-Dist: uvicorn[standard]>=0.30
+Requires-Dist: pydantic>=2.7
+Requires-Dist: pydantic-settings>=2.3
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: httpx>=0.27
+Requires-Dist: tenacity>=8.4
+Requires-Dist: pandas>=2.2
+Requires-Dist: numpy>=1.26
+Requires-Dist: pyarrow>=16.0
+Requires-Dist: duckdb>=1.0
+Requires-Dist: pytz>=2024.1
+Requires-Dist: pandera>=0.19
+Requires-Dist: pyomo>=6.7
+Requires-Dist: highspy>=1.7
+Requires-Dist: scikit-learn>=1.5
+Provides-Extra: db
+Requires-Dist: sqlalchemy>=2.0; extra == "db"
+Requires-Dist: psycopg[binary]>=3.1; extra == "db"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2; extra == "dev"
+Requires-Dist: pytest-cov>=5.0; extra == "dev"
+Requires-Dist: ruff>=0.5; extra == "dev"
+Requires-Dist: mypy>=1.10; extra == "dev"
+Requires-Dist: types-python-dateutil; extra == "dev"
+Requires-Dist: respx>=0.21; extra == "dev"
