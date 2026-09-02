@@ -17,58 +17,47 @@ Public API
 - eda()                     : basic exploratory data analysis
 - run_eqw()                 : equal‑weight replication
 - run_elasticnet()          : Elastic‑Net (with optional Optuna tuning)
-- run_kf()                  : Kalman Filter (PYKalman)
-- run_ekf()                 : Extended Kalman Filter (filterpy)
+- run_kalman_filter_model() : analytical linear-Gaussian Kalman Filter
+- run_ensemble_kalman_filter_model() : stochastic Ensemble Kalman Filter
 - display_results()         : tables and charts summarising the chosen run
 
 Private helpers (underscored) implement plumbing and hyper‑parameter search.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple, List, Any
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import warnings
 import numpy as np
 import pandas as pd
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import ElasticNet, ElasticNetCV
+from sklearn.linear_model import ElasticNet, ElasticNetCV, Lasso, LinearRegression, Ridge
 from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+import scipy.stats as stats
 
 # Optional dependencies
 try:
-    from pykalman import KalmanFilter  # type: ignore
-except ImportError:
-    KalmanFilter = None  # runtime check later
-
-try:
-    import filterpy.kalman as fk  # type: ignore
-except ImportError:
-    fk = None
-
-try:
     import optuna  # type: ignore
+    from optuna.exceptions import TrialPruned  # type: ignore
 except ImportError:
     optuna = None
+    TrialPruned = RuntimeError
 
-from IPython.display import display
-import scipy.stats as stats
-import matplotlib.pyplot as plt
-from statsmodels.tsa.stattools import adfuller
-from IPython.display import display
-from sklearn.linear_model import ElasticNet, Ridge, Lasso
-from sklearn.preprocessing import MinMaxScaler
+try:
+    from statsmodels.tsa.stattools import adfuller  # type: ignore
+except ImportError:
+    adfuller = None
+
+try:
+    from IPython.display import display  # type: ignore
+except ImportError:
+    def display(value: Any) -> None:
+        print(value)
 from itertools import product
-from sklearn.linear_model import LinearRegression
-from typing import Sequence
-import optuna
-from sklearn.linear_model import Ridge
-from pykalman import KalmanFilter  # ensure pykalman is installed
-from optuna.exceptions import TrialPruned
-from typing import Tuple
 
 
 class PortfolioReplicator:
@@ -102,7 +91,7 @@ class PortfolioReplicator:
         df_target: pd.DataFrame,
         index_components: Dict[str, float],
         df_underlyings: pd.DataFrame,
-        var_parameters: Dict[str, float] = {},
+        var_parameters: Optional[Dict[str, float]] = None,
         transaction_cost: float = 0.0,  # default no transaction costs
         annual_factor: int = 52,  # default to weekly data
         *,
@@ -152,6 +141,7 @@ class PortfolioReplicator:
         self._X_scaled: Optional[np.ndarray] = None
 
         # Set the var parameters
+        var_parameters = var_parameters or {}
         self.var_confidence = var_parameters.get('var_confidence')
         self.var_horizon = var_parameters.get('var_horizon')   
         self.max_var_threshold = var_parameters.get('max_var_threshold') 
@@ -483,6 +473,9 @@ class PortfolioReplicator:
             ['Test Statistic','p-value','Used Lag','Nobs',
              'Crit(1%)','Crit(5%)','Crit(10%)','Stationary']
         """
+        if adfuller is None:
+            raise ImportError("stationarity_check requires statsmodels.")
+
         # 1) Build dict of series to test
         series_dict: Dict[str, pd.Series] = {
             col: self._X[col].dropna() for col in self._X.columns
@@ -661,15 +654,54 @@ class PortfolioReplicator:
         float
             VaR as a positive loss number.
         """
-        # standard deviation of the historical returns
-        sigma = np.std(returns)
+        if self.var_confidence is None or not 0.5 < self.var_confidence < 1.0:
+            raise ValueError("var_confidence must be between 0.5 and 1.0.")
+        if self.var_horizon is None or self.var_horizon <= 0:
+            raise ValueError("var_horizon must be strictly positive.")
 
-        # Gaussian quantile for the configured confidence
-        z = stats.norm.ppf(self.var_confidence)
+        values = np.asarray(returns, dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size < 2:
+            return np.nan
 
-        # scale to the time horizon (weeks → sqrt scaling)
-        var = -z * sigma * np.sqrt(self.var_horizon)
-        return var
+        # Positive Gaussian VaR loss: z_confidence * sample volatility * sqrt(horizon).
+        sigma = float(np.std(values, ddof=1))
+        z = float(stats.norm.ppf(self.var_confidence))
+        return z * sigma * np.sqrt(self.var_horizon)
+
+    def _apply_var_limit(
+        self,
+        X: np.ndarray,
+        weights: np.ndarray,
+        history_end: int,
+        rolling_window: int,
+    ) -> Tuple[np.ndarray, float, float]:
+        """Scale candidate weights using only returns known before execution.
+
+        ``history_end`` is exclusive.  For weights first used at date ``t`` it
+        must therefore be at most ``t``; this keeps the risk overlay free of
+        look-ahead bias.
+        """
+        scaled_weights = np.asarray(weights, dtype=float).copy()
+        if (self.var_confidence is None or self.var_horizon is None
+                or history_end < 2):
+            return scaled_weights, np.nan, 1.0
+        if self.max_var_threshold is not None and self.max_var_threshold <= 0:
+            raise ValueError("max_var_threshold must be strictly positive.")
+
+        history_start = max(0, history_end - rolling_window)
+        historical_returns = X[history_start:history_end] @ scaled_weights
+        var_value = self.calculate_var(historical_returns)
+        scale = 1.0
+
+        if (self.max_var_threshold is not None
+                and np.isfinite(var_value)
+                and var_value > self.max_var_threshold):
+            scale = self.max_var_threshold / var_value
+            scaled_weights *= scale
+            var_value *= scale
+
+        return scaled_weights, float(var_value), float(scale)
     
    ## run_optuna_normalized
     def run_optuna_normalized(
@@ -702,6 +734,9 @@ class PortfolioReplicator:
             The completed study.
         """
         storage_url = f"sqlite:///{storage}.db"
+        if optuna is None:
+            raise ImportError("run_optuna_normalized requires optuna.")
+
         study = optuna.create_study(
             direction="minimize",
             study_name=study_name,
@@ -885,9 +920,8 @@ class PortfolioReplicator:
 
         # start with zeros (or you could seed equal‐weight)
         w_orig = np.zeros(X_values.shape[1])
-        last_cost = 0.0
-
         for t in range(rolling_window, len(X_values)):
+            cost = 0.0
             # on rebalance days, refit
             if (t - rolling_window) % rebalancing_window == 0:
                 start = t - rolling_window
@@ -913,22 +947,12 @@ class PortfolioReplicator:
                 w_norm = model.coef_
                 w_orig = w_norm * (scaler_X.scale_ / scaler_y.scale_)
 
-                # VaR scaling
-                scale = 1.0
-                if len(replica_returns) >= int(rolling_window/4):
-                    # last up to rolling_window returns
-                    hist = [
-                        np.dot(X_values[start + j], weights_history[-1])
-                        for j in range(min(len(replica_returns), rolling_window))
-                    ]
-                    v = self.calculate_var(hist)
-                    if self.max_var_threshold and v > self.max_var_threshold:
-                        scale = self.max_var_threshold / v
-                        w_orig *= scale
-                        v = self.calculate_var([r * scale for r in hist])
-                    var_values.append(v)
-                else:
-                    var_values.append(np.nan)
+                # Historical VaR uses the most recent window ending at t-1.
+                w_orig, v, scale = self._apply_var_limit(
+                    X_values, w_orig, history_end=t,
+                    rolling_window=rolling_window
+                )
+                var_values.append(v)
                 scaling_factors.append(scale)
 
                 # gross exposure
@@ -941,7 +965,6 @@ class PortfolioReplicator:
                 else:
                     cost = 0.0
                 transaction_costs.append(cost)
-                last_cost = cost
 
                 # store new weights
                 weights_history.append(w_orig.copy())
@@ -954,7 +977,7 @@ class PortfolioReplicator:
                 weights_history.append(w_orig.copy())       # same weights
 
             # compute return at t using current w_orig
-            ret = np.dot(X_values[t], w_orig) - last_cost
+            ret = np.dot(X_values[t], w_orig) - cost
             replica_returns.append(ret)
             target_dates.append(dates[t])
 
@@ -997,7 +1020,8 @@ class PortfolioReplicator:
             'max_drawdown': float(dd_r),
             'target_max_drawdown': float(dd_t),
             'avg_gross_exposure': float(np.mean(gross_exposures)),
-            'avg_var': float(np.nanmean(var_values)),
+            'avg_var': (float(np.nanmean(var_values))
+                        if np.isfinite(var_values).any() else np.nan),
             'replica_returns': replica_series,
             'aligned_target': aligned_target,
             'cumulative_replica': cum_rep,
@@ -1020,20 +1044,24 @@ class PortfolioReplicator:
         rebalancing_window: int,
     ) -> Dict[str, Any]:
         """
-        Time-varying weights via KalmanFilter, with initial Ridge estimate.
-        On non-rebalance days, holds the last weight vector constant.
+        Linear-Gaussian Kalman replication with a Ridge initial state.
+
+        The weight used for return ``t`` is measurable using information through
+        ``t-1``.  Observation ``y[t]`` is assimilated only after that return and
+        can therefore change the executed portfolio from ``t+1`` onward.
         """
-        # 1) pull series & arrays
         X_df = self.underlyings_returns
         y_ser = self.target_returns.iloc[:, 0]
         dates = y_ser.index.to_list()
         X = X_df.values
         y = y_ser.values
 
-        tc = self.transaction_cost_rate
-        max_var = self.max_var_threshold
+        if rolling_window < 2 or rolling_window >= len(X):
+            raise ValueError("rolling_window must be at least 2 and smaller than the sample.")
+        if rebalancing_window < 1:
+            raise ValueError("rebalancing_window must be at least 1.")
 
-        # containers
+        tc = self.transaction_cost_rate
         weights_history   = []
         replica_returns   = []
         target_dates      = []
@@ -1042,85 +1070,74 @@ class PortfolioReplicator:
         var_values        = []
         scaling_factors   = []
 
-        # 2) initial weights via Ridge
         X0, y0 = X[:rolling_window], y[:rolling_window]
         init_ridge = Ridge(alpha=1.0, fit_intercept=False).fit(X0, y0)
         current_state = init_ridge.coef_.copy()
         current_cov   = np.eye(len(current_state)) * 0.1
 
-        # 3) set up KalmanFilter
-        A = np.eye(len(current_state))
-        Q = np.eye(len(current_state)) * 0.01
+        n_assets = len(current_state)
+        identity = np.eye(n_assets)
+        process_cov = np.eye(n_assets) * 0.01
         resid = y0 - X0 @ current_state
-        R = np.var(resid)
-        kf = KalmanFilter(
-            transition_matrices=A,
-            transition_covariance=Q,
-            observation_covariance=R,
-            initial_state_mean=current_state,
-            initial_state_covariance=current_cov
+        observation_var = max(float(np.var(resid, ddof=1)), 1e-12)
+
+        executed_weights, current_var, current_scale = self._apply_var_limit(
+            X, current_state, history_end=rolling_window,
+            rolling_window=rolling_window
         )
+        execution_cost = 0.0
 
-        last_cost = 0.0
-
-        # 4) rolling & rebalance loop
         for t in range(rolling_window, len(X)):
-            # rebalance check
-            if (t - rolling_window) % rebalancing_window == 0:
-                # update observation matrix & perform filter update
-                kf.observation_matrices = X[t].reshape(1, -1)
-                obs = np.array([y[t]])
-                current_state, current_cov = kf.filter_update(
-                    filtered_state_mean=current_state,
-                    filtered_state_covariance=current_cov,
-                    observation=obs
-                )
-                w = current_state.copy()
+            # These are the positions established before return t is observed.
+            w = executed_weights.copy()
+            cost = execution_cost
+            execution_cost = 0.0
 
-                # VaR scaling
-                scale = 1.0
-                if len(replica_returns) >= int(rolling_window/4):
-                    hist = [
-                        np.dot(X[rolling_window + j], weights_history[-1])
-                        for j in range(min(len(replica_returns), rolling_window))
-                    ]
-                    v = self.calculate_var(hist)
-                    if v > max_var:
-                        scale = max_var / v
-                        w *= scale
-                        v = self.calculate_var([r * scale for r in hist])
-                    var_values.append(v)
-                else:
-                    var_values.append(np.nan)
-                scaling_factors.append(scale)
-
-                # transaction cost
-                if weights_history:
-                    turn = np.abs(w - weights_history[-1]).sum()
-                    cost = tc * turn
-                else:
-                    cost = 0.0
-                transaction_costs.append(cost)
-                last_cost = cost
-
-                weights_history.append(w.copy())
-            else:
-                # hold weights, no cost, carry forward metrics
-                w = weights_history[-1].copy()
-                var_values.append(var_values[-1])
-                scaling_factors.append(scaling_factors[-1])
-                transaction_costs.append(0.0)
-                weights_history.append(w.copy())
-
-            # gross exposure
+            weights_history.append(w)
+            var_values.append(current_var)
+            scaling_factors.append(current_scale)
+            transaction_costs.append(cost)
             gross_exposures.append(np.abs(w).sum())
-
-            # next‐period return
-            ret = float(X[t] @ w - last_cost)
+            ret = float(X[t] @ w - cost)
             replica_returns.append(ret)
             target_dates.append(dates[t])
 
-        # 5) assemble pandas & metrics
+            if t == len(X) - 1:
+                continue
+
+            # Random-walk prediction occurs every period, even when trading is held.
+            predicted_state = current_state.copy()
+            predicted_cov = current_cov + process_cov
+
+            # Assimilate every observation after its period return.  Filtering
+            # frequency and portfolio trading frequency are separate decisions.
+            h = X[t].reshape(1, -1)
+            innovation = float(y[t] - (h @ predicted_state).item())
+            innovation_var = float(
+                (h @ predicted_cov @ h.T).item() + observation_var
+            )
+            gain = (predicted_cov @ h.T) / innovation_var
+            current_state = predicted_state + gain[:, 0] * innovation
+
+            # Joseph form preserves symmetry and positive semidefiniteness.
+            residual_map = identity - gain @ h
+            current_cov = (
+                residual_map @ predicted_cov @ residual_map.T
+                + observation_var * (gain @ gain.T)
+            )
+            current_cov = 0.5 * (current_cov + current_cov.T)
+
+            # Only the execution layer waits for the rebalance schedule.
+            if (t - rolling_window + 1) % rebalancing_window == 0:
+                next_weights, next_var, next_scale = self._apply_var_limit(
+                    X, current_state, history_end=t + 1,
+                    rolling_window=rolling_window
+                )
+                execution_cost = tc * np.abs(next_weights - executed_weights).sum()
+                executed_weights = next_weights
+                current_var = next_var
+                current_scale = next_scale
+
         rep_ser = pd.Series(replica_returns, index=target_dates)
         tgt_ser = y_ser.loc[rep_ser.index]
         cum_rep = (1 + rep_ser).cumprod()
@@ -1164,14 +1181,17 @@ class PortfolioReplicator:
             'rolling_window': rolling_window,
             'rebalancing_window': rebalancing_window,
             'transaction_cost_rate': tc,
+            'process_noise_scale': 0.01,
+            'observation_noise': observation_var,
             'avg_gross_exposure': float(np.mean(gross_exposures)),
-            'avg_var': float(np.nanmean(var_values))
+            'avg_var': (float(np.nanmean(var_values))
+                        if np.isfinite(var_values).any() else np.nan)
         }
 
     #################################################################################################################################
     #################################################################################################################################
     # -----------------------------------------------------------------------------
-    # 2.4 Extended Kalman Filter 
+    # 2.4 Ensemble Kalman Filter
     # -----------------------------------------------------------------------------
     ## Optuna objective for the Extended Kalman Filter engine ##
     def _optuna_objective_KFE(self, trial: optuna.Trial) -> float:
@@ -1208,27 +1228,33 @@ class PortfolioReplicator:
         rolling_window: int,
         rebalancing_window: int,
         ensemble_size: int = 20,
-        process_noise_scale: float = 0.01
+        process_noise_scale: float = 0.01,
+        random_state: Optional[int] = 42,
     ) -> Dict[str, Any]:
         """
-        Ensemble Kalman filter replication:
-         - initial Ridge on first rolling_window
-         - ensemble of weight vectors evolving by random-walk process noise
-         - observation update each rebalance
-         - VaR-scaling, transaction costs
-         - holds weights constant on non-rebalance days
+        Stochastic Ensemble Kalman Filter for time-varying replication weights.
+
+        Every ensemble member is propagated with random-walk process noise.  At
+        every date the cross-covariance between member weights and their
+        predicted target returns determines the gain.  As in the analytical KF,
+        observation ``y[t]`` is used only after return ``t`` and may affect the
+        executed portfolio from ``t+1`` onward.
         """
-        # 1) pull arrays & dates
         X = self.underlyings_returns.values
         y_ser = self.target_returns.iloc[:, 0]
         y = y_ser.values
         dates = y_ser.index.to_list()
 
-        tc_rate   = self.transaction_cost_rate
-        max_var   = self.max_var_threshold
-        hist_min  = int(rolling_window / 4)
+        if rolling_window < 2 or rolling_window >= len(X):
+            raise ValueError("rolling_window must be at least 2 and smaller than the sample.")
+        if rebalancing_window < 1:
+            raise ValueError("rebalancing_window must be at least 1.")
+        if ensemble_size < 2:
+            raise ValueError("ensemble_size must be at least 2.")
+        if process_noise_scale < 0:
+            raise ValueError("process_noise_scale cannot be negative.")
 
-        # 2) containers
+        tc_rate   = self.transaction_cost_rate
         weights_history   = []
         replica_returns   = []
         target_dates      = []
@@ -1239,87 +1265,89 @@ class PortfolioReplicator:
         scaling_factors   = []
 
         n_assets = X.shape[1]
+        rng = np.random.default_rng(random_state)
 
-        # 3) initial Ridge fit
         X0, y0 = X[:rolling_window], y[:rolling_window]
         ridge = Ridge(alpha=1.0, fit_intercept=False).fit(X0, y0)
-        current_state = ridge.coef_.copy()
-        current_cov   = np.eye(n_assets) * 0.1
+        initial_state = ridge.coef_.copy()
+        resid = y0 - X0 @ initial_state
+        observation_var = max(float(np.var(resid, ddof=1)), 1e-12)
 
-        # 4) set up KalmanFilter skeleton
-        A = np.eye(n_assets)
-        Q = np.eye(n_assets) * process_noise_scale
-        resid = y0 - X0 @ current_state
-        R = np.var(resid) + 1e-6
-        kf = KalmanFilter(
-            transition_matrices=A,
-            transition_covariance=Q,
-            observation_covariance=R,
-            initial_state_mean=current_state,
-            initial_state_covariance=current_cov
+        # Centering makes the finite ensemble start exactly at the Ridge mean.
+        ensemble = initial_state + rng.normal(
+            loc=0.0, scale=np.sqrt(0.1), size=(ensemble_size, n_assets)
         )
+        ensemble += initial_state - ensemble.mean(axis=0)
 
-        last_cost = 0.0
+        executed_weights, current_var, current_scale = self._apply_var_limit(
+            X, ensemble.mean(axis=0), history_end=rolling_window,
+            rolling_window=rolling_window
+        )
+        execution_cost = 0.0
 
-        # 5) rolling & rebalance loop
         for t in range(rolling_window, len(X)):
-            # rebalance day?
-            if (t - rolling_window) % rebalancing_window == 0:
-                obs_matrix = X[t].reshape(1, -1)
-                kf.observation_matrices = obs_matrix
-                obs = np.array([y[t]])
-                current_state, current_cov = kf.filter_update(
-                    filtered_state_mean=current_state,
-                    filtered_state_covariance=current_cov,
-                    observation=obs
-                )
-                w = current_state.copy()
+            w = executed_weights.copy()
+            cost = execution_cost
+            execution_cost = 0.0
 
-                # VaR scaling
-                scale = 1.0
-                if len(replica_returns) >= hist_min:
-                    hist = [
-                        np.dot(X[rolling_window + j], weights_history[-1])
-                        for j in range(min(len(replica_returns), rolling_window))
-                    ]
-                    v = self.calculate_var(hist)
-                    if v > max_var:
-                        scale = max_var / v
-                        w *= scale
-                        v = self.calculate_var([r * scale for r in hist])
-                    var_values.append(v)
-                else:
-                    var_values.append(np.nan)
-                scaling_factors.append(scale)
-
-                # transaction cost
-                if weights_history:
-                    turn = np.abs(w - weights_history[-1]).sum()
-                    cost = tc_rate * turn
-                else:
-                    cost = 0.0
-                transaction_costs.append(cost)
-                last_cost = cost
-
-                weights_history.append(w.copy())
-            else:
-                # hold previous weights, no cost, carry metrics forward
-                w = weights_history[-1].copy()
-                var_values.append(var_values[-1])
-                scaling_factors.append(scaling_factors[-1])
-                transaction_costs.append(0.0)
-                weights_history.append(w.copy())
-
-            # gross exposure
+            weights_history.append(w)
+            var_values.append(current_var)
+            scaling_factors.append(current_scale)
+            transaction_costs.append(cost)
             gross_exposures.append(np.abs(w).sum())
-            net_exposure.append((w).sum())
-
-            # one-step-ahead return
-            ret = float(X[t] @ w - last_cost)
+            net_exposure.append(w.sum())
+            ret = float(X[t] @ w - cost)
             replica_returns.append(ret)
             target_dates.append(dates[t])
 
-        # 6) assemble results
+            if t == len(X) - 1:
+                continue
+
+            # Forecast each member every period.  process_noise_scale is a
+            # covariance scale, hence its square root is the simulation std.
+            if process_noise_scale > 0:
+                ensemble = ensemble + rng.normal(
+                    loc=0.0,
+                    scale=np.sqrt(process_noise_scale),
+                    size=ensemble.shape,
+                )
+
+            predicted_observations = ensemble @ X[t]
+            state_anomalies = ensemble - ensemble.mean(axis=0)
+            observation_anomalies = (
+                predicted_observations - predicted_observations.mean()
+            )
+            cross_cov = (
+                state_anomalies.T @ observation_anomalies
+                / (ensemble_size - 1)
+            )
+            innovation_var = (
+                float(observation_anomalies @ observation_anomalies)
+                / (ensemble_size - 1)
+                + observation_var
+            )
+            gain = cross_cov / innovation_var
+
+            perturbed_observations = y[t] + rng.normal(
+                loc=0.0,
+                scale=np.sqrt(observation_var),
+                size=ensemble_size,
+            )
+            innovations = perturbed_observations - predicted_observations
+            ensemble = ensemble + innovations[:, None] * gain[None, :]
+
+            if (t - rolling_window + 1) % rebalancing_window == 0:
+                next_weights, next_var, next_scale = self._apply_var_limit(
+                    X, ensemble.mean(axis=0), history_end=t + 1,
+                    rolling_window=rolling_window
+                )
+                execution_cost = (
+                    tc_rate * np.abs(next_weights - executed_weights).sum()
+                )
+                executed_weights = next_weights
+                current_var = next_var
+                current_scale = next_scale
+
         rep_ser = pd.Series(replica_returns, index=target_dates)
         tgt_ser = y_ser.loc[rep_ser.index]
         cum_rep = (1 + rep_ser).cumprod()
@@ -1364,8 +1392,11 @@ class PortfolioReplicator:
             'rebalancing_window': rebalancing_window,
             'ensemble_size': ensemble_size,
             'process_noise_scale': process_noise_scale,
+            'observation_noise': observation_var,
+            'random_state': random_state,
             'avg_gross_exposure': float(np.mean(gross_exposures)),
-            'avg_var': float(np.nanmean(var_values)),
+            'avg_var': (float(np.nanmean(var_values))
+                        if np.isfinite(var_values).any() else np.nan),
             'net_exposure': net_exposure
         }
 
@@ -1522,9 +1553,7 @@ class PortfolioReplicator:
 
         positions_list = []
         prev_pos = np.zeros(len(tickers), dtype=int)
-        initial_positions = wh[0]
-        initial_cost = np.abs(initial_positions).sum() * transaction_cost_rate
-        total_cost = initial_cost
+        total_cost = 0.0
  
 
         for date, w in zip(dates, wh):
@@ -1673,7 +1702,7 @@ class PortfolioReplicator:
 
             # b) weighted sum of underlying returns that day
             gross_ret_t = float(np.dot(W[t], R[t]))
-            net_ret_t   = gross_ret_t
+            net_ret_t   = gross_ret_t - cost_t
             r_replica[t] = net_ret_t
             total_cost += cost_t
 
