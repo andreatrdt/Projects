@@ -195,6 +195,23 @@ class PortfolioReplicator:
         plt.grid(True)
         plt.show()
 
+    def calculate_var(self, returns: Sequence[float]) -> float:
+        """
+        Parametric Gaussian VaR expressed as a positive loss number.
+        """
+        returns = np.asarray(returns, dtype=float)
+        returns = returns[np.isfinite(returns)]
+
+        if len(returns) < 2:
+            return np.nan
+
+        sigma = np.std(returns, ddof=1)
+        z = stats.norm.ppf(self.var_confidence)
+
+        return float(
+            z * sigma * np.sqrt(self.var_horizon)
+        )
+    
     ## statistics ##
     def fin_stats(self) -> pd.DataFrame:
         ''' the function must return:
@@ -674,46 +691,91 @@ class PortfolioReplicator:
    ## run_optuna_normalized
     def run_optuna_normalized(
         self,
-        n_trials:   int,
-        storage:    str,
+        n_trials: int,
+        storage: str,
         study_name: str,
         obj,
-        show_progress_bar: bool = True
+        show_progress_bar: bool = True,
     ) -> optuna.Study:
         """
-        Run an Optuna study (minimizing) with optional progress bar.
+        Run an Optuna study and require at least one valid COMPLETE trial.
 
-        Parameters
-        ----------
-        n_trials : int
-            Number of trials to run.
-        storage : str
-            File name (without .db) for the SQLite backend.
-        study_name : str
-            A unique name for this study.
-        obj : Callable[[optuna.Trial], float]
-            The objective function (e.g. self._optuna_objective_EN).
-        show_progress_bar : bool, default True
-            If True, display Optuna’s built‐in tqdm progress bar.
-
-        Returns
-        -------
-        optuna.Study
-            The completed study.
+        Failed/pruned trials are summarized explicitly so that an empty study
+        cannot fail later with the misleading `study.best_params` error.
         """
+        if optuna is None:
+            raise ImportError("run_optuna_normalized requires optuna.")
+
         storage_url = f"sqlite:///{storage}.db"
+
         study = optuna.create_study(
             direction="minimize",
             study_name=study_name,
             storage=storage_url,
-            load_if_exists=True
+            load_if_exists=True,
         )
+
+        # Unexpected exceptions raised by the objective are deliberately NOT
+        # swallowed: we want the real model error to be visible.
         study.optimize(
             obj,
             n_trials=n_trials,
-            show_progress_bar=show_progress_bar
+            show_progress_bar=show_progress_bar,
         )
+
+        TrialState = optuna.trial.TrialState
+
+        complete_trials = study.get_trials(
+            deepcopy=False,
+            states=(TrialState.COMPLETE,),
+        )
+        failed_trials = study.get_trials(
+            deepcopy=False,
+            states=(TrialState.FAIL,),
+        )
+        pruned_trials = study.get_trials(
+            deepcopy=False,
+            states=(TrialState.PRUNED,),
+        )
+
+        if not complete_trials:
+            self._best_params_norm = None
+
+            recent_trials = study.trials[-10:]
+
+            details = "\n".join(
+                (
+                    f"  Trial {t.number}: "
+                    f"state={t.state.name}, "
+                    f"value={t.value}, "
+                    f"params={t.params}, "
+                    f"user_attrs={t.user_attrs}"
+                )
+                for t in recent_trials
+            )
+
+            raise RuntimeError(
+                f"Optuna study '{study_name}' finished without any COMPLETE trial.\n"
+                f"COMPLETE={len(complete_trials)}, "
+                f"FAIL={len(failed_trials)}, "
+                f"PRUNED={len(pruned_trials)}.\n\n"
+                f"Recent trials:\n{details}\n\n"
+                "No best_params are available. "
+                "The previous 'Record does not exist' error was only a "
+                "secondary consequence of having zero COMPLETE trials."
+            )
+
         self._best_params_norm = study.best_params
+
+        print(
+            f"Optuna completed: "
+            f"{len(complete_trials)} COMPLETE, "
+            f"{len(failed_trials)} FAIL, "
+            f"{len(pruned_trials)} PRUNED."
+        )
+        print(f"Best value: {study.best_value}")
+        print(f"Best params: {study.best_params}")
+
         return study
 
 
@@ -1009,6 +1071,58 @@ class PortfolioReplicator:
             'transaction_costs': transaction_costs
         }
 
+    def _optuna_objective_KF(self, trial: optuna.Trial) -> float:
+        """
+        Optuna objective for the standard Kalman Filter replication engine.
+        """
+
+        process_noise_scale = trial.suggest_float(
+            "process_noise_scale",
+            1e-3,
+            1e-1,
+            log=True,
+        )
+
+        rolling_window = trial.suggest_categorical(
+            "rolling_window",
+            [208],
+        )
+
+        rebalancing_window = trial.suggest_categorical(
+            "rebalancing_window",
+            [2, 3, 4],
+        )
+
+        result = self.run_kalman_filter_model(
+            rolling_window=rolling_window,
+            rebalancing_window=rebalancing_window,
+            process_noise_scale=process_noise_scale,
+        )
+
+        ir = float(result["information_ratio"])
+
+        if not np.isfinite(ir):
+            reason = (
+                f"Non-finite KF information ratio. "
+                f"IR={ir}, "
+                f"tracking_error={result['tracking_error']}, "
+                f"replica_return={result['replica_return']}, "
+                f"target_return={result['target_return']}, "
+                f"process_noise_scale={process_noise_scale}, "
+                f"rebalancing_window={rebalancing_window}"
+            )
+
+            trial.set_user_attr("invalid_reason", reason)
+            raise TrialPruned(reason)
+
+        objective_value = -ir
+
+        trial.report(objective_value, step=0)
+
+        if trial.should_prune():
+            raise TrialPruned()
+
+        return objective_value
     #################################################################################################################################
     #################################################################################################################################
     # -----------------------------------------------------------------------------
@@ -1018,189 +1132,450 @@ class PortfolioReplicator:
         self,
         rolling_window: int,
         rebalancing_window: int,
+        process_noise_scale: float = 0.01,
     ) -> Dict[str, Any]:
         """
-        Time-varying weights via KalmanFilter, with initial Ridge estimate.
-        On non-rebalance days, holds the last weight vector constant.
+        Causal Kalman Filter portfolio replication.
+
+        Timing convention
+        -----------------
+        At period t:
+
+        1. executed_weights were determined using information available
+        no later than t-1;
+        2. period-t replica return is realized using executed_weights;
+        3. X[t] and y[t] are observed;
+        4. the Kalman filter assimilates observation t;
+        5. if a rebalance is due, new executed weights are prepared for t+1.
+
+        Therefore y[t] can never affect the replica return at t.
         """
-        # 1) pull series & arrays
+
+        if rolling_window <= 1:
+            raise ValueError("rolling_window must be greater than 1.")
+
+        if rebalancing_window <= 0:
+            raise ValueError("rebalancing_window must be strictly positive.")
+
+        if process_noise_scale <= 0:
+            raise ValueError("process_noise_scale must be strictly positive.")
+
+        # ------------------------------------------------------------------
+        # 1. Align X and y explicitly
+        # ------------------------------------------------------------------
         X_df = self.underlyings_returns
         y_ser = self.target_returns.iloc[:, 0]
-        dates = y_ser.index.to_list()
-        X = X_df.values
-        y = y_ser.values
 
-        tc = self.transaction_cost_rate
+        common_idx = X_df.index.intersection(y_ser.index)
+
+        X_df = X_df.loc[common_idx]
+        y_ser = y_ser.loc[common_idx]
+
+        X = X_df.to_numpy(dtype=float)
+        y = y_ser.to_numpy(dtype=float)
+        dates = common_idx
+
+        n_obs, n_assets = X.shape
+
+        if n_obs <= rolling_window:
+            raise ValueError(
+                f"Not enough observations: n_obs={n_obs}, "
+                f"rolling_window={rolling_window}."
+            )
+
+        tc_rate = self.transaction_cost_rate
         max_var = self.max_var_threshold
 
-        # containers
-        weights_history   = []
-        replica_returns   = []
-        target_dates      = []
-        gross_exposures   = []
-        transaction_costs = []
-        var_values        = []
-        scaling_factors   = []
+        # ------------------------------------------------------------------
+        # 2. Initial state from information available before first OOS return
+        # ------------------------------------------------------------------
+        X0 = X[:rolling_window]
+        y0 = y[:rolling_window]
 
-        # 2) initial weights via Ridge
-        X0, y0 = X[:rolling_window], y[:rolling_window]
-        init_ridge = Ridge(alpha=1.0, fit_intercept=False).fit(X0, y0)
-        current_state = init_ridge.coef_.copy()
-        current_cov   = np.eye(len(current_state)) * 0.1
+        ridge = Ridge(
+            alpha=1.0,
+            fit_intercept=False,
+        ).fit(X0, y0)
 
-        # 3) set up KalmanFilter
-        A = np.eye(len(current_state))
-        Q = np.eye(len(current_state)) * 0.01
-        resid = y0 - X0 @ current_state
-        R = np.var(resid)
+        current_state = ridge.coef_.copy()
+        current_cov = np.eye(n_assets) * 0.1
+
+        # State model:
+        #
+        #   w_t = w_{t-1} + eta_t
+        #   eta_t ~ N(0, Q)
+        #
+        A = np.eye(n_assets)
+        Q = np.eye(n_assets) * process_noise_scale
+
+        # Observation model:
+        #
+        #   y_t = X_t w_t + epsilon_t
+        #   epsilon_t ~ N(0, R)
+        #
+        residuals = y0 - X0 @ current_state
+        R = max(float(np.var(residuals, ddof=1)), 1e-12)
+
         kf = KalmanFilter(
             transition_matrices=A,
             transition_covariance=Q,
-            observation_covariance=R,
+            observation_covariance=np.array([[R]]),
             initial_state_mean=current_state,
-            initial_state_covariance=current_cov
+            initial_state_covariance=current_cov,
         )
 
-        last_cost = 0.0
+        # ------------------------------------------------------------------
+        # 3. Helper: VaR scaling using ONLY historical information
+        # ------------------------------------------------------------------
+        def apply_var_limit(
+            candidate_weights: np.ndarray,
+            history_end: int,
+        ):
+            """
+            history_end is EXCLUSIVE.
 
-        # 4) rolling & rebalance loop
-        for t in range(rolling_window, len(X)):
-            # rebalance check
-            if (t - rolling_window) % rebalancing_window == 0:
-                # update observation matrix & perform filter update
-                kf.observation_matrices = X[t].reshape(1, -1)
-                obs = np.array([y[t]])
-                current_state, current_cov = kf.filter_update(
-                    filtered_state_mean=current_state,
-                    filtered_state_covariance=current_cov,
-                    observation=obs
+            For weights to be executed at t, history_end=t, therefore
+            only X[:t] can enter the VaR calculation.
+            """
+
+            w = candidate_weights.copy()
+
+            history_start = max(
+                0,
+                history_end - rolling_window,
+            )
+
+            historical_X = X[history_start:history_end]
+
+            if len(historical_X) < 2:
+                return w, np.nan, 1.0
+
+            historical_portfolio_returns = historical_X @ w
+
+            var = self.calculate_var(
+                historical_portfolio_returns
+            )
+
+            scale = 1.0
+
+            if (
+                max_var is not None
+                and np.isfinite(var)
+                and var > max_var
+                and var > 0
+            ):
+                scale = max_var / var
+                w = w * scale
+
+                var = self.calculate_var(
+                    historical_X @ w
                 )
-                w = current_state.copy()
 
-                # VaR scaling
-                scale = 1.0
-                if len(replica_returns) >= int(rolling_window/4):
-                    hist = [
-                        np.dot(X[rolling_window + j], weights_history[-1])
-                        for j in range(min(len(replica_returns), rolling_window))
-                    ]
-                    v = self.calculate_var(hist)
-                    if v > max_var:
-                        scale = max_var / v
-                        w *= scale
-                        v = self.calculate_var([r * scale for r in hist])
-                    var_values.append(v)
-                else:
-                    var_values.append(np.nan)
-                scaling_factors.append(scale)
+            return w, var, scale
 
-                # transaction cost
-                if weights_history:
-                    turn = np.abs(w - weights_history[-1]).sum()
-                    cost = tc * turn
-                else:
-                    cost = 0.0
-                transaction_costs.append(cost)
-                last_cost = cost
+        # ------------------------------------------------------------------
+        # 4. Initial EXECUTED portfolio
+        #
+        # It uses observations [0, ..., rolling_window-1].
+        # It will earn the return at t = rolling_window.
+        # ------------------------------------------------------------------
+        executed_weights, current_var, current_scale = apply_var_limit(
+            current_state,
+            history_end=rolling_window,
+        )
 
-                weights_history.append(w.copy())
-            else:
-                # hold weights, no cost, carry forward metrics
-                w = weights_history[-1].copy()
-                var_values.append(var_values[-1])
-                scaling_factors.append(scaling_factors[-1])
-                transaction_costs.append(0.0)
-                weights_history.append(w.copy())
+        # Cost generated at the end of t is charged when the new position
+        # starts being used at t+1.
+        pending_transaction_cost = 0.0
 
-            # gross exposure
-            gross_exposures.append(np.abs(w).sum())
+        # ------------------------------------------------------------------
+        # 5. Result containers
+        # ------------------------------------------------------------------
+        weights_history = []
+        latent_weights_history = []
 
-            # next‐period return
-            ret = float(X[t] @ w - last_cost)
-            replica_returns.append(ret)
+        replica_returns = []
+        target_dates = []
+
+        gross_exposures = []
+        transaction_costs = []
+
+        var_values = []
+        scaling_factors = []
+
+        # ------------------------------------------------------------------
+        # 6. Out-of-sample loop
+        # ------------------------------------------------------------------
+        for t in range(rolling_window, n_obs):
+
+            # ==============================================================
+            # A. REALIZE RETURN AT t
+            #
+            # IMPORTANT:
+            # executed_weights were determined BEFORE y[t] is observed.
+            # ==============================================================
+
+            cost_t = pending_transaction_cost
+            pending_transaction_cost = 0.0
+
+            ret_t = float(
+                X[t] @ executed_weights
+                - cost_t
+            )
+
+            replica_returns.append(ret_t)
             target_dates.append(dates[t])
 
-        # 5) assemble pandas & metrics
-        rep_ser = pd.Series(replica_returns, index=target_dates)
-        tgt_ser = y_ser.loc[rep_ser.index]
-        cum_rep = (1 + rep_ser).cumprod()
-        cum_tgt = (1 + tgt_ser).cumprod()
+            weights_history.append(
+                executed_weights.copy()
+            )
 
-        ann = self.annual_factor
-        mu_r = rep_ser.mean() * ann
-        mu_t = tgt_ser.mean() * ann
-        vol_r = rep_ser.std() * np.sqrt(ann)
-        vol_t = tgt_ser.std() * np.sqrt(ann)
-        sharpe_r = mu_r / vol_r if vol_r else 0
-        sharpe_t = mu_t / vol_t if vol_t else 0
-        te = (rep_ser - tgt_ser).std() * np.sqrt(ann)
-        ir = ((mu_r - mu_t) / te) if te else 0
-        corr = rep_ser.corr(tgt_ser)
-        dd_r = (1 - cum_rep / cum_rep.cummax()).max()
-        dd_t = (1 - cum_tgt / cum_tgt.cummax()).max()
+            transaction_costs.append(cost_t)
 
-        self._run_name = "KalmanFilter"
-        return {
-            'replica_return': mu_r,
-            'target_return': mu_t,
-            'replica_vol': vol_r,
-            'target_vol': vol_t,
-            'replica_sharpe': sharpe_r,
-            'target_sharpe': sharpe_t,
-            'tracking_error': te,
-            'information_ratio': ir,
-            'correlation': corr,
-            'max_drawdown': float(dd_r),
-            'target_max_drawdown': float(dd_t),
-            'gross_exposures': gross_exposures,
-            'replica_returns': rep_ser,
-            'aligned_target': tgt_ser,
-            'cumulative_replica': cum_rep,
-            'cumulative_target': cum_tgt,
-            'weights_history': weights_history,
-            'transaction_costs': transaction_costs,
-            'var_values': var_values,
-            'scaling_factors': scaling_factors,
-            'rolling_window': rolling_window,
-            'rebalancing_window': rebalancing_window,
-            'transaction_cost_rate': tc,
-            'avg_gross_exposure': float(np.mean(gross_exposures)),
-            'avg_var': float(np.nanmean(var_values))
-        }
+            gross_exposures.append(
+                float(np.abs(executed_weights).sum())
+            )
 
-    #################################################################################################################################
-    #################################################################################################################################
-    # -----------------------------------------------------------------------------
-    # 2.4 Extended Kalman Filter 
-    # -----------------------------------------------------------------------------
-    ## Optuna objective for the Extended Kalman Filter engine ##
-    def _optuna_objective_KFE(self, trial: optuna.Trial) -> float:
-        """
-        Optuna objective for the Ensemble Kalman Filter engine:
-        maximizes information ratio by minimizing its negative.
-        """
-        # 1) suggest hyper-parameters
-        ensemble_size        = trial.suggest_int("ensemble_size", 10, 50)
-        process_noise_scale  = trial.suggest_float("process_noise_scale", 1e-3, 1e-1, log=True)
-        rolling_window       = trial.suggest_categorical("rolling_window", [208])
-        rebalancing_window   = trial.suggest_categorical("rebalancing_window", [2,3,4])
+            var_values.append(current_var)
+            scaling_factors.append(current_scale)
 
-        # 2) run your ensemble KF model
-        result = self.run_ensemble_kalman_filter_model(
-            rolling_window       = rolling_window,
-            rebalancing_window   = rebalancing_window,
-            ensemble_size        = ensemble_size,
-            process_noise_scale  = process_noise_scale
+            # ==============================================================
+            # B. PERIOD t HAS NOW ENDED
+            #
+            # X[t] and y[t] are now known.
+            #
+            # Assimilate observation t into the LATENT state.
+            # ==============================================================
+
+            observation_matrix = X[t].reshape(1, -1)
+
+            current_state, current_cov = kf.filter_update(
+                filtered_state_mean=current_state,
+                filtered_state_covariance=current_cov,
+                observation=np.array([y[t]]),
+                observation_matrix=observation_matrix,
+            )
+
+            latent_weights_history.append(
+                current_state.copy()
+            )
+
+            # ==============================================================
+            # C. DECIDE WHETHER TO TRADE FOR t+1
+            #
+            # We have now observed information through t.
+            # ==============================================================
+
+            rebalance_for_next_period = (
+                (t - rolling_window + 1)
+                % rebalancing_window
+                == 0
+            )
+
+            if (
+                rebalance_for_next_period
+                and t + 1 < n_obs
+            ):
+
+                candidate_weights = current_state.copy()
+
+                # For t+1 we can use data up through t.
+                next_weights, next_var, next_scale = apply_var_limit(
+                    candidate_weights,
+                    history_end=t + 1,
+                )
+
+                turnover = np.abs(
+                    next_weights - executed_weights
+                ).sum()
+
+                pending_transaction_cost = (
+                    tc_rate * turnover
+                )
+
+                executed_weights = next_weights
+
+                current_var = next_var
+                current_scale = next_scale
+
+        # ------------------------------------------------------------------
+        # 7. Results
+        # ------------------------------------------------------------------
+        rep_ser = pd.Series(
+            replica_returns,
+            index=target_dates,
+            name="KF replica",
         )
 
-        # 3) get IR and report for pruning
-        ir = result["information_ratio"]
-        trial.report(-ir, step=0)
+        tgt_ser = y_ser.loc[rep_ser.index]
+
+        cum_rep = (1.0 + rep_ser).cumprod()
+        cum_tgt = (1.0 + tgt_ser).cumprod()
+
+        ann = self.annual_factor
+
+        mu_r = rep_ser.mean() * ann
+        mu_t = tgt_ser.mean() * ann
+
+        vol_r = rep_ser.std() * np.sqrt(ann)
+        vol_t = tgt_ser.std() * np.sqrt(ann)
+
+        sharpe_r = (
+            mu_r / vol_r
+            if np.isfinite(vol_r) and vol_r > 0
+            else np.nan
+        )
+
+        sharpe_t = (
+            mu_t / vol_t
+            if np.isfinite(vol_t) and vol_t > 0
+            else np.nan
+        )
+
+        tracking_error = (
+            (rep_ser - tgt_ser).std()
+            * np.sqrt(ann)
+        )
+
+        information_ratio = (
+            (mu_r - mu_t) / tracking_error
+            if (
+                np.isfinite(tracking_error)
+                and tracking_error > 0
+            )
+            else np.nan
+        )
+
+        correlation = rep_ser.corr(tgt_ser)
+
+        dd_r = (
+            1.0
+            - cum_rep / cum_rep.cummax()
+        ).max()
+
+        dd_t = (
+            1.0
+            - cum_tgt / cum_tgt.cummax()
+        ).max()
+
+        self._run_name = "KalmanFilter"
+
+        return {
+            "model": "KalmanFilter",
+
+            "rolling_window": rolling_window,
+            "rebalancing_window": rebalancing_window,
+            "process_noise_scale": process_noise_scale,
+
+            "replica_return": float(mu_r),
+            "target_return": float(mu_t),
+
+            "replica_vol": float(vol_r),
+            "target_vol": float(vol_t),
+
+            "replica_sharpe": float(sharpe_r),
+            "target_sharpe": float(sharpe_t),
+
+            "tracking_error": float(tracking_error),
+            "information_ratio": float(information_ratio),
+            "correlation": float(correlation),
+
+            "max_drawdown": float(dd_r),
+            "target_max_drawdown": float(dd_t),
+
+            "replica_returns": rep_ser,
+            "aligned_target": tgt_ser,
+
+            "cumulative_replica": cum_rep,
+            "cumulative_target": cum_tgt,
+
+            # actual portfolio held during each return period
+            "weights_history": weights_history,
+
+            # latent KF estimate after observing each period
+            "latent_weights_history": latent_weights_history,
+
+            "transaction_costs": transaction_costs,
+
+            "gross_exposures": gross_exposures,
+            "avg_gross_exposure": float(
+                np.mean(gross_exposures)
+            ),
+
+            "var_values": var_values,
+            "avg_var": float(
+                np.nanmean(var_values)
+            ),
+
+            "scaling_factors": scaling_factors,
+
+            "transaction_cost_rate": tc_rate,
+            "observation_noise": R,
+        }
+
+
+    #################################################################################################################################
+    #################################################################################################################################
+    # -----------------------------------------------------------------------------
+    # 2.4 Ensamble Kalman Filter 
+    # -----------------------------------------------------------------------------
+    ## Optuna objective for the Ensamble Kalman Filter engine ##
+    def _optuna_objective_EnKF(self, trial: optuna.Trial) -> float:
+
+        ensemble_size = trial.suggest_int(
+            "ensemble_size",
+            10,
+            50,
+        )
+
+        process_noise_scale = trial.suggest_float(
+            "process_noise_scale",
+            1e-3,
+            1e-1,
+            log=True,
+        )
+
+        rolling_window = trial.suggest_categorical(
+            "rolling_window",
+            [208],
+        )
+
+        rebalancing_window = trial.suggest_categorical(
+            "rebalancing_window",
+            [2, 3, 4],
+        )
+
+        result = self.run_ensemble_kalman_filter_model(
+            rolling_window=rolling_window,
+            rebalancing_window=rebalancing_window,
+            ensemble_size=ensemble_size,
+            process_noise_scale=process_noise_scale,
+        )
+
+        ir = float(result["information_ratio"])
+
+        if not np.isfinite(ir):
+            reason = (
+                f"Non-finite EnKF information ratio. "
+                f"IR={ir}, "
+                f"tracking_error={result['tracking_error']}, "
+                f"replica_return={result['replica_return']}, "
+                f"target_return={result['target_return']}, "
+                f"ensemble_size={ensemble_size}, "
+                f"process_noise_scale={process_noise_scale}"
+            )
+
+            trial.set_user_attr("invalid_reason", reason)
+            raise TrialPruned(reason)
+
+        objective_value = -ir
+
+        trial.report(objective_value, step=0)
+
         if trial.should_prune():
             raise TrialPruned()
 
-        # 4) Optuna minimizes, so return negative IR to maximize it
-        return -ir
+        return objective_value
     
     ## run Ensemble Kalman Filter model ##
     def run_ensemble_kalman_filter_model(
@@ -1208,167 +1583,686 @@ class PortfolioReplicator:
         rolling_window: int,
         rebalancing_window: int,
         ensemble_size: int = 20,
-        process_noise_scale: float = 0.01
+        process_noise_scale: float = 0.01,
+        random_state: int = 42,
     ) -> Dict[str, Any]:
         """
-        Ensemble Kalman filter replication:
-         - initial Ridge on first rolling_window
-         - ensemble of weight vectors evolving by random-walk process noise
-         - observation update each rebalance
-         - VaR-scaling, transaction costs
-         - holds weights constant on non-rebalance days
+        Causal stochastic Ensemble Kalman Filter for portfolio replication.
+
+        State model
+        -----------
+            w_t = w_{t-1} + eta_t
+            eta_t ~ N(0, q I)
+
+        Observation model
+        -----------------
+            y_t = X_t @ w_t + epsilon_t
+            epsilon_t ~ N(0, R)
+
+        Timing
+        ------
+        At each period t:
+
+            1. use executed weights determined with information through t-1;
+            2. realize period-t portfolio return;
+            3. observe X[t] and y[t];
+            4. propagate and update the ensemble;
+            5. if a rebalance is due, prepare new executed weights for t+1.
+
+        Therefore y[t] can never affect the portfolio return earned at t.
         """
-        # 1) pull arrays & dates
-        X = self.underlyings_returns.values
+
+        # ---------------------------------------------------------------
+        # 0. Validation
+        # ---------------------------------------------------------------
+        if rolling_window <= 1:
+            raise ValueError("rolling_window must be greater than 1.")
+
+        if rebalancing_window <= 0:
+            raise ValueError(
+                "rebalancing_window must be strictly positive."
+            )
+
+        if ensemble_size < 2:
+            raise ValueError(
+                "ensemble_size must be at least 2."
+            )
+
+        if process_noise_scale <= 0:
+            raise ValueError(
+                "process_noise_scale must be strictly positive."
+            )
+
+        # ---------------------------------------------------------------
+        # 1. Explicitly align target and underlyings
+        # ---------------------------------------------------------------
+        X_df = self.underlyings_returns
         y_ser = self.target_returns.iloc[:, 0]
-        y = y_ser.values
-        dates = y_ser.index.to_list()
 
-        tc_rate   = self.transaction_cost_rate
-        max_var   = self.max_var_threshold
-        hist_min  = int(rolling_window / 4)
+        common_idx = X_df.index.intersection(y_ser.index)
 
-        # 2) containers
-        weights_history   = []
-        replica_returns   = []
-        target_dates      = []
-        gross_exposures   = []
-        net_exposure      = []
-        transaction_costs = []
-        var_values        = []
-        scaling_factors   = []
+        X_df = X_df.loc[common_idx]
+        y_ser = y_ser.loc[common_idx]
 
-        n_assets = X.shape[1]
+        X = X_df.to_numpy(dtype=float)
+        y = y_ser.to_numpy(dtype=float)
 
-        # 3) initial Ridge fit
-        X0, y0 = X[:rolling_window], y[:rolling_window]
-        ridge = Ridge(alpha=1.0, fit_intercept=False).fit(X0, y0)
-        current_state = ridge.coef_.copy()
-        current_cov   = np.eye(n_assets) * 0.1
+        dates = common_idx
 
-        # 4) set up KalmanFilter skeleton
-        A = np.eye(n_assets)
-        Q = np.eye(n_assets) * process_noise_scale
-        resid = y0 - X0 @ current_state
-        R = np.var(resid) + 1e-6
-        kf = KalmanFilter(
-            transition_matrices=A,
-            transition_covariance=Q,
-            observation_covariance=R,
-            initial_state_mean=current_state,
-            initial_state_covariance=current_cov
+        n_obs, n_assets = X.shape
+
+        if n_obs <= rolling_window:
+            raise ValueError(
+                f"Not enough observations: "
+                f"n_obs={n_obs}, "
+                f"rolling_window={rolling_window}."
+            )
+
+        tc_rate = self.transaction_cost_rate
+        max_var = self.max_var_threshold
+
+        rng = np.random.default_rng(random_state)
+
+        # ---------------------------------------------------------------
+        # 2. Initial state estimate using ONLY the initial training window
+        # ---------------------------------------------------------------
+        X0 = X[:rolling_window]
+        y0 = y[:rolling_window]
+
+        ridge = Ridge(
+            alpha=1.0,
+            fit_intercept=False,
+        ).fit(X0, y0)
+
+        initial_mean = ridge.coef_.copy()
+
+        # Observation noise variance R
+        residuals = y0 - X0 @ initial_mean
+
+        R = max(
+            float(np.var(residuals, ddof=1)),
+            1e-12,
         )
 
-        last_cost = 0.0
+        # ---------------------------------------------------------------
+        # 3. Initialize actual ensemble
+        #
+        # Each member is a possible latent weight vector.
+        # ---------------------------------------------------------------
+        initial_state_std = np.sqrt(0.1)
 
-        # 5) rolling & rebalance loop
-        for t in range(rolling_window, len(X)):
-            # rebalance day?
-            if (t - rolling_window) % rebalancing_window == 0:
-                obs_matrix = X[t].reshape(1, -1)
-                kf.observation_matrices = obs_matrix
-                obs = np.array([y[t]])
-                current_state, current_cov = kf.filter_update(
-                    filtered_state_mean=current_state,
-                    filtered_state_covariance=current_cov,
-                    observation=obs
+        ensemble = (
+            initial_mean
+            + rng.normal(
+                loc=0.0,
+                scale=initial_state_std,
+                size=(ensemble_size, n_assets),
+            )
+        )
+
+        # Recenter so the ensemble mean is exactly the Ridge estimate
+        ensemble = (
+            ensemble
+            - ensemble.mean(axis=0)
+            + initial_mean
+        )
+
+        latent_state = ensemble.mean(axis=0)
+
+        # q corresponds to the variance in:
+        #
+        #       eta_t ~ N(0, q I)
+        #
+        process_noise_std = np.sqrt(
+            process_noise_scale
+        )
+
+        # ---------------------------------------------------------------
+        # 4. VaR helper
+        #
+        # Candidate portfolio is evaluated using ONLY historical X.
+        # ---------------------------------------------------------------
+        def apply_var_limit(
+            candidate_weights: np.ndarray,
+            history_end: int,
+        ):
+            """
+            history_end is exclusive.
+
+            If weights are being prepared for t+1,
+            history_end=t+1 means data through period t are known.
+            """
+
+            w = candidate_weights.copy()
+
+            history_start = max(
+                0,
+                history_end - rolling_window,
+            )
+
+            historical_X = X[
+                history_start:history_end
+            ]
+
+            if len(historical_X) < 2:
+                return w, np.nan, 1.0
+
+            historical_portfolio_returns = (
+                historical_X @ w
+            )
+
+            var = self.calculate_var(
+                historical_portfolio_returns
+            )
+
+            scale = 1.0
+
+            if (
+                max_var is not None
+                and np.isfinite(var)
+                and var > max_var
+                and var > 0
+            ):
+                scale = max_var / var
+
+                w = w * scale
+
+                var = self.calculate_var(
+                    historical_X @ w
                 )
-                w = current_state.copy()
 
-                # VaR scaling
-                scale = 1.0
-                if len(replica_returns) >= hist_min:
-                    hist = [
-                        np.dot(X[rolling_window + j], weights_history[-1])
-                        for j in range(min(len(replica_returns), rolling_window))
-                    ]
-                    v = self.calculate_var(hist)
-                    if v > max_var:
-                        scale = max_var / v
-                        w *= scale
-                        v = self.calculate_var([r * scale for r in hist])
-                    var_values.append(v)
-                else:
-                    var_values.append(np.nan)
-                scaling_factors.append(scale)
+            return w, var, scale
 
-                # transaction cost
-                if weights_history:
-                    turn = np.abs(w - weights_history[-1]).sum()
-                    cost = tc_rate * turn
-                else:
-                    cost = 0.0
-                transaction_costs.append(cost)
-                last_cost = cost
+        # ---------------------------------------------------------------
+        # 5. Initial executed portfolio
+        #
+        # Only observations [0, ..., rolling_window-1]
+        # are known here.
+        # ---------------------------------------------------------------
+        (
+            executed_weights,
+            current_var,
+            current_scale,
+        ) = apply_var_limit(
+            latent_state,
+            history_end=rolling_window,
+        )
 
-                weights_history.append(w.copy())
-            else:
-                # hold previous weights, no cost, carry metrics forward
-                w = weights_history[-1].copy()
-                var_values.append(var_values[-1])
-                scaling_factors.append(scaling_factors[-1])
-                transaction_costs.append(0.0)
-                weights_history.append(w.copy())
+        # Transaction cost generated by a rebalance is charged
+        # on the first period in which those new weights are held.
+        pending_transaction_cost = 0.0
 
-            # gross exposure
-            gross_exposures.append(np.abs(w).sum())
-            net_exposure.append((w).sum())
+        # ---------------------------------------------------------------
+        # 6. Containers
+        # ---------------------------------------------------------------
+        weights_history = []
+        latent_weights_history = []
 
-            # one-step-ahead return
-            ret = float(X[t] @ w - last_cost)
-            replica_returns.append(ret)
-            target_dates.append(dates[t])
+        replica_returns = []
+        target_dates = []
 
-        # 6) assemble results
-        rep_ser = pd.Series(replica_returns, index=target_dates)
-        tgt_ser = y_ser.loc[rep_ser.index]
-        cum_rep = (1 + rep_ser).cumprod()
-        cum_tgt = (1 + tgt_ser).cumprod()
+        gross_exposures = []
+        net_exposures = []
 
+        transaction_costs = []
+
+        var_values = []
+        scaling_factors = []
+
+        # Optional diagnostic quantities
+        ensemble_spreads = []
+
+        # ---------------------------------------------------------------
+        # 7. Out-of-sample loop
+        # ---------------------------------------------------------------
+        for t in range(
+            rolling_window,
+            n_obs,
+        ):
+
+            # ===========================================================
+            # A. REALIZE PORTFOLIO RETURN AT t
+            #
+            # These weights were determined without y[t].
+            # ===========================================================
+
+            cost_t = pending_transaction_cost
+            pending_transaction_cost = 0.0
+
+            gross_return_t = float(
+                X[t] @ executed_weights
+            )
+
+            net_return_t = (
+                gross_return_t
+                - cost_t
+            )
+
+            replica_returns.append(
+                net_return_t
+            )
+
+            target_dates.append(
+                dates[t]
+            )
+
+            weights_history.append(
+                executed_weights.copy()
+            )
+
+            transaction_costs.append(
+                float(cost_t)
+            )
+
+            gross_exposures.append(
+                float(
+                    np.abs(executed_weights).sum()
+                )
+            )
+
+            net_exposures.append(
+                float(
+                    executed_weights.sum()
+                )
+            )
+
+            var_values.append(
+                current_var
+            )
+
+            scaling_factors.append(
+                current_scale
+            )
+
+            # ===========================================================
+            # B. END OF PERIOD t
+            #
+            # X[t] and y[t] are now observable.
+            #
+            # ENSEMBLE FORECAST STEP
+            # ===========================================================
+
+            process_noise = rng.normal(
+                loc=0.0,
+                scale=process_noise_std,
+                size=(
+                    ensemble_size,
+                    n_assets,
+                ),
+            )
+
+            forecast_ensemble = (
+                ensemble
+                + process_noise
+            )
+
+            # Predicted observation for each ensemble member:
+            #
+            # z_t^(m) = X_t @ w_t^(m)
+            predicted_observations = (
+                forecast_ensemble @ X[t]
+            )
+
+            forecast_mean = (
+                forecast_ensemble.mean(axis=0)
+            )
+
+            observation_mean = (
+                predicted_observations.mean()
+            )
+
+            # Ensemble anomalies
+            weight_anomalies = (
+                forecast_ensemble
+                - forecast_mean
+            )
+
+            observation_anomalies = (
+                predicted_observations
+                - observation_mean
+            )
+
+            # -----------------------------------------------------------
+            # Sample cross covariance Cov(w, y)
+            # shape = (n_assets,)
+            # -----------------------------------------------------------
+            cross_covariance = (
+                weight_anomalies.T
+                @ observation_anomalies
+            ) / (ensemble_size - 1)
+
+            # -----------------------------------------------------------
+            # Sample observation variance + measurement noise R
+            # -----------------------------------------------------------
+            predicted_obs_variance = (
+                observation_anomalies
+                @ observation_anomalies
+            ) / (ensemble_size - 1)
+
+            innovation_variance = (
+                predicted_obs_variance
+                + R
+            )
+
+            if (
+                not np.isfinite(innovation_variance)
+                or innovation_variance <= 0
+            ):
+                raise FloatingPointError(
+                    f"Invalid EnKF innovation variance "
+                    f"at t={t}: "
+                    f"{innovation_variance}"
+                )
+
+            # Kalman gain:
+            #
+            # K_t = Cov(w,y) / Var(y)
+            gain = (
+                cross_covariance
+                / innovation_variance
+            )
+
+            # ===========================================================
+            # C. STOCHASTIC EnKF UPDATE
+            #
+            # Perturbed observations:
+            #
+            # y_t^(m) = y_t + epsilon_t^(m)
+            # ===========================================================
+
+            observation_noise = rng.normal(
+                loc=0.0,
+                scale=np.sqrt(R),
+                size=ensemble_size,
+            )
+
+            perturbed_observations = (
+                y[t]
+                + observation_noise
+            )
+
+            innovations = (
+                perturbed_observations
+                - predicted_observations
+            )
+
+            ensemble = (
+                forecast_ensemble
+                + innovations[:, None]
+                * gain[None, :]
+            )
+
+            if not np.all(
+                np.isfinite(ensemble)
+            ):
+                raise FloatingPointError(
+                    f"Non-finite EnKF ensemble "
+                    f"generated at t={t}."
+                )
+
+            # Latent filter estimate after assimilating y[t]
+            latent_state = (
+                ensemble.mean(axis=0)
+            )
+
+            latent_weights_history.append(
+                latent_state.copy()
+            )
+
+            ensemble_spreads.append(
+                float(
+                    np.mean(
+                        np.std(
+                            ensemble,
+                            axis=0,
+                            ddof=1,
+                        )
+                    )
+                )
+            )
+
+            # ===========================================================
+            # D. REBALANCE FOR NEXT PERIOD?
+            #
+            # We now know information through t.
+            # New weights can therefore be used only from t+1 onward.
+            # ===========================================================
+
+            rebalance_for_next_period = (
+                (
+                    t
+                    - rolling_window
+                    + 1
+                )
+                % rebalancing_window
+                == 0
+            )
+
+            if (
+                rebalance_for_next_period
+                and t + 1 < n_obs
+            ):
+                candidate_weights = (
+                    latent_state.copy()
+                )
+
+                (
+                    next_weights,
+                    next_var,
+                    next_scale,
+                ) = apply_var_limit(
+                    candidate_weights,
+                    history_end=t + 1,
+                )
+
+                turnover = float(
+                    np.abs(
+                        next_weights
+                        - executed_weights
+                    ).sum()
+                )
+
+                pending_transaction_cost = (
+                    tc_rate
+                    * turnover
+                )
+
+                executed_weights = (
+                    next_weights
+                )
+
+                current_var = next_var
+                current_scale = next_scale
+
+        # ---------------------------------------------------------------
+        # 8. Assemble return series
+        # ---------------------------------------------------------------
+        rep_ser = pd.Series(
+            replica_returns,
+            index=target_dates,
+            name="EnKF replica",
+        )
+
+        tgt_ser = y_ser.loc[
+            rep_ser.index
+        ]
+
+        cum_rep = (
+            1.0 + rep_ser
+        ).cumprod()
+
+        cum_tgt = (
+            1.0 + tgt_ser
+        ).cumprod()
+
+        # ---------------------------------------------------------------
+        # 9. Performance metrics
+        # ---------------------------------------------------------------
         ann = self.annual_factor
-        mu_r = rep_ser.mean() * ann
-        mu_t = tgt_ser.mean() * ann
-        vol_r = rep_ser.std() * np.sqrt(ann)
-        vol_t = tgt_ser.std() * np.sqrt(ann)
-        sharpe_r = mu_r / vol_r if vol_r else 0
-        sharpe_t = mu_t / vol_t if vol_t else 0
-        te = (rep_ser - tgt_ser).std() * np.sqrt(ann)
-        ir = (mu_r - mu_t) / te if te else 0
-        corr = rep_ser.corr(tgt_ser)
-        dd_r = (1 - cum_rep / cum_rep.cummax()).max()
-        dd_t = (1 - cum_tgt / cum_tgt.cummax()).max()
 
-        self._run_name = "EnsembleKF"
+        mu_r = (
+            rep_ser.mean()
+            * ann
+        )
+
+        mu_t = (
+            tgt_ser.mean()
+            * ann
+        )
+
+        vol_r = (
+            rep_ser.std()
+            * np.sqrt(ann)
+        )
+
+        vol_t = (
+            tgt_ser.std()
+            * np.sqrt(ann)
+        )
+
+        sharpe_r = (
+            mu_r / vol_r
+            if (
+                np.isfinite(vol_r)
+                and vol_r > 0
+            )
+            else np.nan
+        )
+
+        sharpe_t = (
+            mu_t / vol_t
+            if (
+                np.isfinite(vol_t)
+                and vol_t > 0
+            )
+            else np.nan
+        )
+
+        tracking_error = (
+            (rep_ser - tgt_ser).std()
+            * np.sqrt(ann)
+        )
+
+        information_ratio = (
+            (mu_r - mu_t)
+            / tracking_error
+            if (
+                np.isfinite(
+                    tracking_error
+                )
+                and tracking_error > 0
+            )
+            else np.nan
+        )
+
+        correlation = (
+            rep_ser.corr(tgt_ser)
+        )
+
+        dd_r = (
+            1.0
+            - cum_rep
+            / cum_rep.cummax()
+        ).max()
+
+        dd_t = (
+            1.0
+            - cum_tgt
+            / cum_tgt.cummax()
+        ).max()
+
+        self._run_name = (
+            "EnsembleKalmanFilter"
+        )
+
         return {
-            'replica_return': mu_r,
-            'target_return': mu_t,
-            'replica_vol': vol_r,
-            'target_vol': vol_t,
-            'replica_sharpe': sharpe_r,
-            'target_sharpe': sharpe_t,
-            'tracking_error': te,
-            'information_ratio': ir,
-            'correlation': corr,
-            'max_drawdown': float(dd_r),
-            'target_max_drawdown': float(dd_t),
-            'gross_exposures': gross_exposures,
-            'replica_returns': rep_ser,
-            'aligned_target': tgt_ser,
-            'cumulative_replica': cum_rep,
-            'cumulative_target': cum_tgt,
-            'weights_history': weights_history,
-            'transaction_costs': transaction_costs,
-            'var_values': var_values,
-            'scaling_factors': scaling_factors,
-            'rolling_window': rolling_window,
-            'rebalancing_window': rebalancing_window,
-            'ensemble_size': ensemble_size,
-            'process_noise_scale': process_noise_scale,
-            'avg_gross_exposure': float(np.mean(gross_exposures)),
-            'avg_var': float(np.nanmean(var_values)),
-            'net_exposure': net_exposure
-        }
+            "model": "EnsembleKalmanFilter",
 
+            "rolling_window": rolling_window,
+            "rebalancing_window": rebalancing_window,
+
+            "ensemble_size": ensemble_size,
+            "process_noise_scale": process_noise_scale,
+            "random_state": random_state,
+
+            "observation_noise": R,
+
+            "replica_return": float(mu_r),
+            "target_return": float(mu_t),
+
+            "replica_vol": float(vol_r),
+            "target_vol": float(vol_t),
+
+            "replica_sharpe": float(sharpe_r),
+            "target_sharpe": float(sharpe_t),
+
+            "tracking_error": float(
+                tracking_error
+            ),
+
+            "information_ratio": float(
+                information_ratio
+            ),
+
+            "correlation": float(
+                correlation
+            ),
+
+            "max_drawdown": float(dd_r),
+            "target_max_drawdown": float(dd_t),
+
+            "replica_returns": rep_ser,
+            "aligned_target": tgt_ser,
+
+            "cumulative_replica": cum_rep,
+            "cumulative_target": cum_tgt,
+
+            # Actual portfolio held in each return period
+            "weights_history": weights_history,
+
+            # Filter estimate after each observation
+            "latent_weights_history": (
+                latent_weights_history
+            ),
+
+            "transaction_costs": (
+                transaction_costs
+            ),
+
+            "gross_exposures": (
+                gross_exposures
+            ),
+
+            "net_exposure": (
+                net_exposures
+            ),
+
+            "avg_gross_exposure": float(
+                np.mean(
+                    gross_exposures
+                )
+            ),
+
+            "var_values": var_values,
+
+            "avg_var": float(
+                np.nanmean(
+                    var_values
+                )
+            ),
+
+            "scaling_factors": (
+                scaling_factors
+            ),
+
+            "ensemble_spreads": (
+                ensemble_spreads
+            ),
+
+            "transaction_cost_rate": (
+                tc_rate
+            ),
+        }
     ##############################################################################################################################
     ##############################################################################################################################
     # -----------------------------------------------------------------------------
