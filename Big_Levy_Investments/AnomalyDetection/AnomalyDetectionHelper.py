@@ -443,6 +443,153 @@ class AnomalyDataPreparer:
         n_train = int(self.train_frac * len(X_df))
         return X_df.iloc[:n_train], y_ser.iloc[:n_train]
 
+    
+    def make_level_features(
+        self,
+        X_df,
+        y=None,
+        window: int = 52,
+        drawdown_windows: Sequence[int] = (52, 104),
+    ):
+        """
+        Build causal level/regime features without replacing the shock features.
+
+        This transformation is deliberately different from ``make_data_stationary``:
+        the latter detects unusually large *changes*, while this method measures
+        unusually high/low *states* relative to their own recent history.
+
+        Price-like assets
+        -----------------
+        - causal rolling z-score of log level;
+        - drawdown from the running historical peak;
+        - rolling drawdowns over ``drawdown_windows``.
+
+        Interest rates, VIX and the economic-surprise series
+        -----------------------------------------------------
+        - causal rolling z-score of the level.
+
+        The rolling mean and standard deviation used at date t are shifted by one
+        observation, so they are estimated only from information available through
+        t-1. Drawdowns are contemporaneous state variables and can be observed at t;
+        any trading response must therefore start after t.
+        """
+        if window < 2:
+            raise ValueError("window must be at least 2.")
+        drawdown_windows = tuple(int(w) for w in drawdown_windows)
+        if any(w < 2 for w in drawdown_windows):
+            raise ValueError("All drawdown windows must be at least 2.")
+
+        X_df = pd.DataFrame(X_df).copy()
+        X_df.index = pd.to_datetime(X_df.index)
+        X_df = X_df.sort_index()
+
+        price_like_assets = [
+            col for col in X_df.columns
+            if col in {
+                "XAUBGNL", "BDIY", "CRY", "Cl1", "DXY",
+                "EMUSTRUU", "GBP", "JPY", "LF94TRUU",
+                "LF98TRUU", "LG30TRUU", "LMBITR",
+                "LP01TREU", "LUACTRUU", "LUMSTRUU",
+                "MXBR", "MXCN", "MXEU", "MXIN",
+                "MXJP", "MXRU", "MXUS",
+            }
+        ]
+
+        interest_rates = [
+            col for col in X_df.columns
+            if col in {
+                "EONIA",
+                "GTDEM10Y", "GTDEM2Y", "GTDEM30Y",
+                "GTGBP20Y", "GTGBP2Y", "GTGBP30Y",
+                "GTITL10YR", "GTITL2YR", "GTITL30YR",
+                "GTJPY10YR", "GTJPY2YR", "GTJPY30YR",
+                "US0001M", "USGG3M", "USGG2YR",
+                "GT10", "USGG30YR",
+            }
+        ]
+
+        level_features = pd.DataFrame(index=X_df.index)
+
+        def causal_level_z(series: pd.Series) -> pd.Series:
+            past_mean = series.rolling(window=window, min_periods=window).mean().shift(1)
+            past_std = series.rolling(window=window, min_periods=window).std().shift(1)
+            past_std = past_std.replace(0.0, np.nan)
+            return (series - past_mean) / past_std
+
+        # 1. Price/index/FX/total-return series.
+        for col in price_like_assets:
+            series = X_df[col].astype(float)
+            if (series <= 0).any():
+                # A log-level z-score is not defined for non-positive values.
+                # Skip rather than silently apply a different economic definition.
+                continue
+
+            log_level = np.log(series)
+            level_features[f"{col}_level_z"] = causal_level_z(log_level)
+
+            historical_peak = series.cummax()
+            level_features[f"{col}_drawdown_from_peak"] = series / historical_peak - 1.0
+
+            for dd_window in drawdown_windows:
+                rolling_peak = series.rolling(
+                    window=dd_window,
+                    min_periods=dd_window,
+                ).max()
+                level_features[f"{col}_drawdown_{dd_window}w"] = (
+                    series / rolling_peak - 1.0
+                )
+
+        # 2. Interest-rate levels.
+        for col in interest_rates:
+            level_features[f"{col}_level_z"] = causal_level_z(
+                X_df[col].astype(float)
+            )
+
+        # 3. VIX is a stress level, not a price asset. Its drawdown is not used.
+        if "VIX" in X_df.columns:
+            level_features["VIX_level_z"] = causal_level_z(
+                X_df["VIX"].astype(float)
+            )
+
+        # 4. Economic surprise index.
+        if "ECSURPUS" in X_df.columns:
+            level_features["ECSURPUS_level_z"] = causal_level_z(
+                X_df["ECSURPUS"].astype(float)
+            )
+
+        if level_features.shape[1] == 0:
+            raise ValueError("No recognized level/regime features could be constructed.")
+
+        level_features = (
+            level_features
+            .replace([np.inf, -np.inf], np.nan)
+            .dropna()
+        )
+
+        if len(level_features) == 0:
+            raise ValueError(
+                "Level-feature construction produced no usable observations. "
+                "Check the rolling windows and source series."
+            )
+
+        if y is None:
+            return level_features, None
+
+        if isinstance(y, pd.Series):
+            y_series = y.copy()
+            y_series.index = pd.to_datetime(y_series.index)
+            y_series = y_series.sort_index().reindex(X_df.index)
+        else:
+            y_arr = _as_1d_array(y)
+            if len(y_arr) != len(X_df):
+                raise ValueError("y length must match X_df length.")
+            y_series = pd.Series(y_arr, index=X_df.index, name="Y")
+
+        if y_series.isna().any():
+            raise ValueError("Labels are not aligned with X_df before level transformation.")
+
+        y_level = y_series.loc[level_features.index].astype(int)
+        return level_features, y_level
 
 # -----------------------------------------------------------------------------
 # Evaluation
